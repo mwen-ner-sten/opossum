@@ -40,7 +40,8 @@ export interface LastKnownState {
   targetId: string;
   checkId: string;
   result: CheckResult;
-  sessionId: string;
+  /** Absent when the session that produced the result has since been purged. */
+  sessionId?: string;
 }
 
 export interface LiveCheckState {

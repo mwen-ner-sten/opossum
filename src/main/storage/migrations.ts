@@ -121,4 +121,36 @@ export const migrations: Migration[] = [
     changesStoredData: true,
     sql: `ALTER TABLE maintenance_runs ADD COLUMN details_json TEXT;`,
   },
+  {
+    // check_last_state.session_id previously had a plain foreign key, which made it impossible to
+    // delete any closed session that still held a check's latest result. Rebuild the table so the
+    // reference is nullable and clears itself when the session goes away.
+    version: 3,
+    changesStoredData: true,
+    sql: `
+      CREATE TABLE check_last_state_v3 (
+        check_internal_id TEXT PRIMARY KEY REFERENCES checks(internal_id),
+        target_internal_id TEXT NOT NULL REFERENCES targets(internal_id),
+        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+        status TEXT NOT NULL CHECK (status IN ('PASS', 'FAIL')),
+        diagnostic_category TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        duration_ms REAL NOT NULL,
+        details_json TEXT
+      );
+      INSERT INTO check_last_state_v3 SELECT
+        check_internal_id, target_internal_id, session_id, status, diagnostic_category,
+        summary, started_at, completed_at, duration_ms, details_json
+      FROM check_last_state;
+      DROP TABLE check_last_state;
+      ALTER TABLE check_last_state_v3 RENAME TO check_last_state;
+
+      CREATE INDEX idx_intervals_target_time ON status_intervals(target_internal_id, started_at);
+      CREATE INDEX idx_maintenance_ended ON maintenance_runs(ended_at DESC);
+    `,
+  },
 ];
+
+export const LATEST_SCHEMA_VERSION = migrations[migrations.length - 1]!.version;

@@ -7,6 +7,22 @@ const idSchema = z
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/, 'Use letters, numbers, dots, dashes, or underscores');
 const positiveSeconds = z.number().int().min(1).max(86_400);
 
+const HOSTNAME_LABEL = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/;
+const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const IPV6 = /^[0-9a-fA-F:.]+$/;
+
+/**
+ * Accepts an IPv4 address, an IPv6 address, or an RFC 1123 hostname. Rejecting anything else
+ * (including a leading dash) guarantees the value can never be interpreted as a flag by ping.exe.
+ */
+export function isValidHost(host: string): boolean {
+  if (IPV4.test(host)) return true;
+  if (/^[\d.]+$/.test(host)) return false; // numeric-only but not a valid IPv4 address
+  if (host.includes(':')) return IPV6.test(host) && host.split(':').length <= 8;
+  const labels = host.replace(/\.$/, '').split('.');
+  return labels.length > 0 && labels.every((label) => HOSTNAME_LABEL.test(label));
+}
+
 export const appSettingsSchema = z.object({
   default_interval_seconds: positiveSeconds.default(30),
   default_timeout_seconds: positiveSeconds.max(300).default(5),
@@ -22,6 +38,8 @@ const commonCheckFields = {
   enabled: z.boolean().default(true),
   interval_seconds: positiveSeconds.optional(),
   timeout_seconds: positiveSeconds.max(300).optional(),
+  /** Consecutive failures required before a check transitions to FAIL. Defaults to 1. */
+  failures_before_fail: z.number().int().min(1).max(10).optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(30).default([]),
 };
 
@@ -91,12 +109,7 @@ export const targetSchema = z
   .object({
     id: idSchema,
     name: z.string().trim().min(1).max(160),
-    host: z
-      .string()
-      .trim()
-      .min(1)
-      .max(253)
-      .refine((host) => !/[\s"';&|<>]/.test(host), 'Invalid hostname or IP address'),
+    host: z.string().trim().min(1).max(253).refine(isValidHost, 'Invalid hostname or IP address'),
     group: z.string().trim().max(100).optional(),
     description: z.string().trim().max(2_000).optional(),
     enabled: z.boolean().default(true),
@@ -156,6 +169,10 @@ export function effectiveInterval(check: CheckConfig, settings: AppSettings): nu
 
 export function effectiveTimeout(check: CheckConfig, settings: AppSettings): number {
   return check.timeout_seconds ?? settings.default_timeout_seconds;
+}
+
+export function effectiveFailureThreshold(check: CheckConfig): number {
+  return check.failures_before_fail ?? 1;
 }
 
 export function isExpectedHttpStatus(

@@ -1,11 +1,26 @@
-import { effectiveInterval, type AppSettings, type CheckConfig, type TargetConfig } from './config';
+import {
+  effectiveFailureThreshold,
+  effectiveInterval,
+  type AppSettings,
+  type CheckConfig,
+  type TargetConfig,
+} from './config';
 import { CHECK_RUNNERS } from './checks';
+import type { CheckRunner } from './checks/base';
 import type { CheckResult, LastKnownState, LiveCheckState } from './models';
 
-interface SchedulerCallbacks {
+export interface SchedulerCallbacks {
   onStatesChanged(states: LiveCheckState[]): void;
   onResult(targetId: string, checkId: string, result: CheckResult): Promise<void> | void;
   onPaused(targetId: string, checkId: string): Promise<void> | void;
+  /** Invoked when a persistence callback throws; the scheduler itself keeps running. */
+  onError?(context: string, error: unknown): void;
+}
+
+export interface SchedulerOptions {
+  runners?: Partial<Record<CheckConfig['type'], CheckRunner>>;
+  /** Delay before re-running a check whose failure count is still below its threshold. */
+  softFailRetryMs?: number;
 }
 
 interface Entry {
@@ -17,13 +32,18 @@ interface Entry {
   running: boolean;
   manualQueued: boolean;
   pausedByUser: boolean;
+  consecutiveFailures: number;
+  lastStartedAt?: number | undefined;
 }
 
 const keyFor = (targetId: string, checkId: string): string => `${targetId}\0${checkId}`;
+const DEFAULT_SOFT_FAIL_RETRY_MS = 2_000;
 
 export class Scheduler {
   private readonly entries = new Map<string, Entry>();
   private readonly waiting: Array<() => Promise<void>> = [];
+  private readonly runners: Record<CheckConfig['type'], CheckRunner>;
+  private readonly softFailRetryMs: number;
   private activeCount = 0;
   private stopped = false;
   private started = false;
@@ -34,7 +54,10 @@ export class Scheduler {
     targets: TargetConfig[],
     lastKnown: LastKnownState[],
     private readonly callbacks: SchedulerCallbacks,
+    options: SchedulerOptions = {},
   ) {
+    this.runners = { ...CHECK_RUNNERS, ...options.runners };
+    this.softFailRetryMs = options.softFailRetryMs ?? DEFAULT_SOFT_FAIL_RETRY_MS;
     this.reload(settings, targets, lastKnown);
   }
 
@@ -63,41 +86,9 @@ export class Scheduler {
       for (const check of target.checks) {
         const key = keyFor(target.id, check.id);
         wanted.add(key);
-        const paused =
-          !target.enabled ||
-          !check.enabled ||
-          this.pausedAll ||
-          Boolean(this.entries.get(key)?.pausedByUser);
         const existing = this.entries.get(key);
-        if (existing) {
-          existing.target = target;
-          existing.check = check;
-          if (paused && !existing.running) {
-            if (existing.state.status !== 'PAUSED')
-              void this.callbacks.onPaused(target.id, check.id);
-            existing.state = { ...existing.state, status: 'PAUSED', nextRunAt: undefined };
-          } else if (!paused && existing.state.status === 'PAUSED') {
-            existing.state = { ...existing.state, status: 'UNKNOWN' };
-            if (this.started) this.schedule(existing, 0);
-          }
-        } else {
-          const previous = known.get(key);
-          const entry: Entry = {
-            target,
-            check,
-            running: false,
-            manualQueued: false,
-            pausedByUser: false,
-            state: {
-              targetId: target.id,
-              checkId: check.id,
-              status: paused ? 'PAUSED' : 'UNKNOWN',
-              ...(previous ? { lastKnown: previous, isHistorical: true } : { isHistorical: false }),
-            },
-          };
-          this.entries.set(key, entry);
-          if (this.started && !paused) this.schedule(entry, 0);
-        }
+        if (existing) this.updateEntry(existing, target, check);
+        else this.createEntry(key, target, check, known.get(key));
       }
     }
     for (const [key, entry] of this.entries) {
@@ -108,6 +99,52 @@ export class Scheduler {
       }
     }
     this.publish();
+  }
+
+  private isPaused(entry: Entry): boolean {
+    return this.pausedAll || entry.pausedByUser || !entry.target.enabled || !entry.check.enabled;
+  }
+
+  private createEntry(
+    key: string,
+    target: TargetConfig,
+    check: CheckConfig,
+    previous: LastKnownState | undefined,
+  ): void {
+    const entry: Entry = {
+      target,
+      check,
+      running: false,
+      manualQueued: false,
+      pausedByUser: false,
+      consecutiveFailures: 0,
+      state: {
+        targetId: target.id,
+        checkId: check.id,
+        status: 'UNKNOWN',
+        ...(previous ? { lastKnown: previous, isHistorical: true } : { isHistorical: false }),
+      },
+    };
+    if (this.isPaused(entry)) entry.state = { ...entry.state, status: 'PAUSED' };
+    this.entries.set(key, entry);
+    if (this.started && !this.isPaused(entry)) this.schedule(entry, 0);
+  }
+
+  private updateEntry(entry: Entry, target: TargetConfig, check: CheckConfig): void {
+    const intervalChanged =
+      effectiveInterval(entry.check, this.settings) !== effectiveInterval(check, this.settings);
+    entry.target = target;
+    entry.check = check;
+    const paused = this.isPaused(entry);
+    if (paused && !entry.running) {
+      if (entry.state.status !== 'PAUSED') this.recordPaused(entry);
+      entry.state = { ...entry.state, status: 'PAUSED', nextRunAt: undefined };
+    } else if (!paused && entry.state.status === 'PAUSED') {
+      entry.state = { ...entry.state, status: 'UNKNOWN' };
+      if (this.started) this.schedule(entry, 0);
+    } else if (!paused && intervalChanged && !entry.running && this.started) {
+      this.schedule(entry, this.nextDelay(entry));
+    }
   }
 
   runCheck(targetId: string, checkId: string): void {
@@ -134,31 +171,46 @@ export class Scheduler {
     const entry = this.entries.get(keyFor(targetId, checkId));
     if (!entry) return;
     entry.pausedByUser = true;
-    if (entry.timer) clearTimeout(entry.timer);
-    entry.manualQueued = false;
-    if (entry.running) return;
-    entry.state = { ...entry.state, status: 'PAUSED', nextRunAt: undefined, isHistorical: false };
-    void this.callbacks.onPaused(targetId, checkId);
+    this.applyPause(entry);
     this.publish();
   }
 
   resumeCheck(targetId: string, checkId: string): void {
     const entry = this.entries.get(keyFor(targetId, checkId));
-    if (!entry || !entry.target.enabled || !entry.check.enabled || this.pausedAll) return;
+    if (!entry) return;
     entry.pausedByUser = false;
-    entry.state = { ...entry.state, status: 'UNKNOWN', isHistorical: false };
-    this.schedule(entry, 0);
+    this.applyResume(entry);
     this.publish();
   }
 
+  /** Pauses every check for the session without disturbing individual per-check pauses. */
   pauseAllChecks(): void {
     this.pausedAll = true;
-    for (const entry of this.entries.values()) this.pauseCheck(entry.target.id, entry.check.id);
+    for (const entry of this.entries.values()) this.applyPause(entry);
+    this.publish();
   }
 
+  /** Lifts the session-wide pause; checks the operator paused individually stay paused. */
   resumeAllChecks(): void {
     this.pausedAll = false;
-    for (const entry of this.entries.values()) this.resumeCheck(entry.target.id, entry.check.id);
+    for (const entry of this.entries.values()) this.applyResume(entry);
+    this.publish();
+  }
+
+  private applyPause(entry: Entry): void {
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.timer = undefined;
+    entry.manualQueued = false;
+    if (entry.running || entry.state.status === 'PAUSED') return;
+    entry.state = { ...entry.state, status: 'PAUSED', nextRunAt: undefined, isHistorical: false };
+    this.recordPaused(entry);
+  }
+
+  private applyResume(entry: Entry): void {
+    if (this.isPaused(entry) || entry.state.status !== 'PAUSED') return;
+    entry.state = { ...entry.state, status: 'UNKNOWN', isHistorical: false };
+    entry.consecutiveFailures = 0;
+    if (this.started) this.schedule(entry, 0);
   }
 
   async stop(graceMs = 2_000): Promise<void> {
@@ -178,6 +230,13 @@ export class Scheduler {
       }),
       new Promise<void>((resolve) => setTimeout(resolve, graceMs)),
     ]);
+  }
+
+  /** Delay until the next run measured from when the last run started, so intervals do not drift. */
+  private nextDelay(entry: Entry): number {
+    const intervalMs = effectiveInterval(entry.check, this.settings) * 1_000;
+    if (entry.lastStartedAt === undefined) return intervalMs;
+    return Math.max(0, entry.lastStartedAt + intervalMs - Date.now());
   }
 
   private schedule(entry: Entry, delayMs: number): void {
@@ -215,25 +274,66 @@ export class Scheduler {
     if (this.stopped || entry.state.status === 'PAUSED') return;
     entry.running = true;
     entry.controller = new AbortController();
+    entry.lastStartedAt = Date.now();
     entry.state = { ...entry.state, status: 'CHECKING', nextRunAt: undefined };
     this.publish();
-    const runner = CHECK_RUNNERS[entry.check.type];
-    let result: CheckResult;
+    const result = await this.runSafely(entry, entry.controller.signal);
+    entry.running = false;
+    entry.controller = undefined;
+
+    // A canceled result is not an observation: never persist it or present it as FAIL.
+    if (this.stopped || result.category === 'canceled') {
+      entry.state = { ...entry.state, status: this.isPaused(entry) ? 'PAUSED' : 'UNKNOWN' };
+      entry.manualQueued = false;
+      this.publish();
+      return;
+    }
+
+    const paused = this.isPaused(entry);
+    const softFail = !paused && this.isSoftFailure(entry, result);
+    if (!softFail) {
+      try {
+        await this.callbacks.onResult(entry.target.id, entry.check.id, result);
+      } catch (error) {
+        this.callbacks.onError?.(`record result ${entry.target.id}/${entry.check.id}`, error);
+      }
+    }
+    entry.state = softFail
+      ? { ...entry.state, status: entry.state.result?.status ?? 'UNKNOWN' }
+      : { ...entry.state, status: paused ? 'PAUSED' : result.status, result, isHistorical: false };
+    const rerun = entry.manualQueued;
+    entry.manualQueued = false;
+    if (paused) this.recordPaused(entry);
+    else if (softFail) this.schedule(entry, Math.min(this.softFailRetryMs, this.nextDelay(entry)));
+    else this.schedule(entry, rerun ? 0 : this.nextDelay(entry));
+    this.publish();
+  }
+
+  /**
+   * Tracks consecutive failures. Returns true when the failure should be retried quietly
+   * because the check's `failures_before_fail` threshold has not been reached yet.
+   */
+  private isSoftFailure(entry: Entry, result: CheckResult): boolean {
+    if (result.status === 'PASS') {
+      entry.consecutiveFailures = 0;
+      return false;
+    }
+    entry.consecutiveFailures += 1;
+    const threshold = effectiveFailureThreshold(entry.check);
+    return entry.consecutiveFailures < threshold && entry.state.result?.status !== 'FAIL';
+  }
+
+  private async runSafely(entry: Entry, signal: AbortSignal): Promise<CheckResult> {
     try {
-      result = await runner({
+      return await this.runners[entry.check.type]({
         target: entry.target,
         check: entry.check,
         settings: this.settings,
-        signal: entry.controller.signal,
+        signal,
       });
-      try {
-        await this.callbacks.onResult(entry.target.id, entry.check.id, result);
-      } catch {
-        /* Keep live monitoring responsive; database health is reported separately. */
-      }
     } catch (error) {
       const completedAt = new Date().toISOString();
-      result = {
+      return {
         status: 'FAIL',
         category: 'unexpected',
         summary: `Check failed unexpectedly: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -241,28 +341,14 @@ export class Scheduler {
         completedAt,
         durationMs: 0,
       };
-    } finally {
-      entry.running = false;
-      entry.controller = undefined;
     }
-    const paused =
-      this.pausedAll ||
-      !entry.target.enabled ||
-      !entry.check.enabled ||
-      entry.pausedByUser ||
-      entry.state.status === 'PAUSED';
-    entry.state = {
-      ...entry.state,
-      status: paused ? 'PAUSED' : result.status,
-      result,
-      isHistorical: false,
-    };
-    const rerun = entry.manualQueued;
-    entry.manualQueued = false;
-    if (paused) await this.callbacks.onPaused(entry.target.id, entry.check.id);
-    else if (!this.stopped)
-      this.schedule(entry, rerun ? 0 : effectiveInterval(entry.check, this.settings) * 1_000);
-    this.publish();
+  }
+
+  private recordPaused(entry: Entry): void {
+    void Promise.resolve(this.callbacks.onPaused(entry.target.id, entry.check.id)).catch(
+      (error: unknown) =>
+        this.callbacks.onError?.(`record pause ${entry.target.id}/${entry.check.id}`, error),
+    );
   }
 
   private publish(): void {

@@ -28,4 +28,5 @@ export const IPC = {
   statusChanged: 'opossum:event:status',
   configurationChanged: 'opossum:event:configuration',
   maintenanceChanged: 'opossum:event:maintenance',
+  healthChanged: 'opossum:event:health',
 } as const;

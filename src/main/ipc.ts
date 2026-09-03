@@ -2,12 +2,13 @@ import { z } from 'zod';
 import { dialog, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { appSettingsSchema, checkSchema, targetSchema } from '@core/config';
 import { idArgumentSchema, pairArgumentSchema } from '@shared/contracts';
-import { serializeError } from '@shared/errors';
+import { OpossumError, serializeError } from '@shared/errors';
 import { IPC } from '@shared/ipc-channels';
 import { ApplicationService } from './application';
 
 const importOptionsSchema = z.object({
   filePath: z.string().optional(),
+  example: z.boolean().optional(),
   mode: z.enum(['replace', 'add-only']).optional(),
   previewOnly: z.boolean().optional(),
 });
@@ -20,13 +21,22 @@ const timelineSchema = z.object({
 });
 const purgeSchema = z.object({
   before: z.iso.datetime().optional(),
-  sessionIds: z.array(z.string()).optional(),
+  sessionIds: z.array(z.string().uuid()).max(1_000).optional(),
   targetId: idArgumentSchema.optional(),
   checkId: idArgumentSchema.optional(),
   all: z.boolean().optional(),
   clearLastKnown: z.boolean().optional(),
 });
+const sessionsSchema = z
+  .object({
+    limit: z.number().int().min(1).max(1000).optional(),
+    before: z.iso.datetime().optional(),
+  })
+  .optional();
+
 let allowedRenderer: (() => WebContents | undefined) | undefined;
+/** Only paths the user picked in a dialog (or the adjacent opossum.yaml) may be read for import. */
+const approvedImportPaths = new Set<string>();
 
 function register<T extends z.ZodType>(
   channel: string,
@@ -49,8 +59,11 @@ export function registerIpc(
   dataDirectory: string,
   logsDirectory: string,
   renderer: () => WebContents | undefined,
+  adjacentConfigurationPath?: string,
 ): void {
   allowedRenderer = renderer;
+  if (adjacentConfigurationPath) approvedImportPaths.add(adjacentConfigurationPath);
+
   register(IPC.snapshot, z.undefined(), () => application.getSnapshot());
   register(IPC.runCheck, pairArgumentSchema, ([targetId, checkId]) =>
     application.scheduler.runCheck(targetId, checkId),
@@ -88,6 +101,8 @@ export function registerIpc(
     application.deleteCheck(targetId, checkId),
   );
   register(IPC.importConfiguration, importOptionsSchema, async (options) => {
+    const mode = options.previewOnly ? undefined : options.mode;
+    if (options.example) return application.importExample(mode);
     let filePath = options.filePath;
     if (!filePath) {
       const selected = await dialog.showOpenDialog({
@@ -96,9 +111,15 @@ export function registerIpc(
         filters: [{ name: 'YAML configuration', extensions: ['yaml', 'yml'] }],
       });
       filePath = selected.filePaths[0];
+      if (filePath) approvedImportPaths.add(filePath);
     }
     if (!filePath) return undefined;
-    return application.importFromFile(filePath, options.previewOnly ? undefined : options.mode);
+    if (!approvedImportPaths.has(filePath))
+      throw new OpossumError(
+        'VALIDATION',
+        'Choose the configuration file through the import dialog.',
+      );
+    return application.importFromFile(filePath, mode);
   });
   register(IPC.exportConfiguration, exportOptionsSchema, async (options) => {
     const selected = await dialog.showSaveDialog({
@@ -110,15 +131,8 @@ export function registerIpc(
     application.exportToFile(selected.filePath, options.targetIds);
     return selected.filePath;
   });
-  register(
-    IPC.sessions,
-    z
-      .object({
-        limit: z.number().int().min(1).max(1000).optional(),
-        before: z.string().optional(),
-      })
-      .optional(),
-    (options) => application.repositories.listSessions(options?.limit),
+  register(IPC.sessions, sessionsSchema, (options) =>
+    application.repositories.listSessions(options?.limit, options?.before),
   );
   register(IPC.timeline, timelineSchema, (options) =>
     application.getTimeline(options.targetId, options.checkId, options.range, options.sessionId),
@@ -140,8 +154,9 @@ export function registerIpc(
   register(IPC.openLogs, z.undefined(), () => shell.openPath(logsDirectory));
 
   application.setEventHandlers({
-    status: (states: unknown) => renderer()?.send(IPC.statusChanged, states),
+    status: (states) => renderer()?.send(IPC.statusChanged, states),
     configuration: () => renderer()?.send(IPC.configurationChanged),
-    maintenance: (summary: unknown) => renderer()?.send(IPC.maintenanceChanged, summary),
+    maintenance: (summary) => renderer()?.send(IPC.maintenanceChanged, summary),
+    health: (healthy) => renderer()?.send(IPC.healthChanged, healthy),
   });
 }

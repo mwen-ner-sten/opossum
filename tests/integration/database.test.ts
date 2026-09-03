@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { DatabaseService } from '../../src/main/storage/database';
 import { Repositories } from '../../src/main/storage/repositories';
 import Database from 'better-sqlite3';
-import { migrations } from '../../src/main/storage/migrations';
+import { LATEST_SCHEMA_VERSION, migrations } from '../../src/main/storage/migrations';
 
 const directories: string[] = [];
 const databases: DatabaseService[] = [];
@@ -39,7 +39,62 @@ describe('SQLite repositories', () => {
     expect(
       readdirSync(join(directory, 'backups')).filter((name) => name.endsWith('.db')),
     ).toHaveLength(1);
-    expect(database.db.prepare('SELECT version FROM schema_version').pluck().get()).toBe(2);
+    expect(database.db.prepare('SELECT version FROM schema_version').pluck().get()).toBe(
+      LATEST_SCHEMA_VERSION,
+    );
+    expect(database.db.pragma('foreign_keys', { simple: true })).toBe(1);
+  });
+
+  it('refuses to open a database written by a newer schema', () => {
+    const { database } = setup();
+    database.db.prepare('UPDATE schema_version SET version=?').run(LATEST_SCHEMA_VERSION + 5);
+    database.close();
+    expect(
+      () =>
+        new DatabaseService({ database: database.paths.database, backups: database.paths.backups }),
+    ).toThrow(/newer than this build/);
+  });
+
+  it('deletes a closed session even when a check last-known result still points at it', () => {
+    const { repositories } = setup();
+    repositories.saveTarget({
+      id: 'server',
+      name: 'Server',
+      host: 'localhost',
+      enabled: true,
+      checks: [{ id: 'ping', name: 'Ping', type: 'ping', enabled: true, tags: [] }],
+    });
+    const closed = repositories.createSession('test');
+    repositories.recordResult(closed.id, 'server', 'ping', {
+      status: 'PASS',
+      category: 'success',
+      summary: 'OK',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      completedAt: '2026-01-01T00:00:01.000Z',
+      durationMs: 1,
+    });
+    repositories.closeSession(closed.id);
+    repositories.createSession('test-2');
+    const summary = repositories.purgeHistory({ sessionIds: [closed.id] });
+    expect(summary.error).toBeUndefined();
+    expect(summary.sessionsRemoved).toBe(1);
+    expect(repositories.listSessions().map((session) => session.id)).not.toContain(closed.id);
+    const lastKnown = repositories.getLastKnownStates();
+    expect(lastKnown).toHaveLength(1);
+    expect(lastKnown[0]?.sessionId).toBeUndefined();
+    expect(lastKnown[0]?.result.summary).toBe('OK');
+  });
+
+  it('only removes empty sessions inside the purge scope', () => {
+    const { repositories } = setup();
+    const emptyOld = repositories.createSession('a');
+    repositories.closeSession(emptyOld.id);
+    const emptyRecent = repositories.createSession('b');
+    repositories.closeSession(emptyRecent.id);
+    repositories.createSession('current');
+    const summary = repositories.purgeHistory({ sessionIds: [emptyOld.id] });
+    expect(summary.sessionsRemoved).toBe(1);
+    expect(repositories.listSessions().map((session) => session.id)).toContain(emptyRecent.id);
   });
   it('creates a WAL database and preserves identity through edits and soft deletion', () => {
     const { database, repositories } = setup();

@@ -26,6 +26,7 @@ targets:
         type: tcp
         port: 3389
         enabled: true
+        failures_before_fail: 2
         tags: [remote-access]
       - id: ebo-web
         name: EBO WebStation

@@ -6,12 +6,14 @@ import type { LiveCheckState, SessionSummary, TimelineResult } from '@core/model
 import type {
   AppSnapshot,
   DatabaseStats,
+  ImportMode,
   ImportPreview,
   MaintenanceSummary,
   PurgeOptions,
   PurgePreview,
   TimelineRange,
 } from '@shared/contracts';
+import { OpossumError } from '@shared/errors';
 import { PRODUCT } from '@shared/product';
 import { DatabaseService } from './storage/database';
 import { MaintenanceEngine } from './storage/maintenance';
@@ -19,10 +21,40 @@ import { Repositories } from './storage/repositories';
 import { exportConfigurationYaml } from './transfer/export';
 import { parseConfigurationYaml, previewImport } from './transfer/import';
 
-interface ApplicationEvents {
+export interface ApplicationEvents {
   status(states: LiveCheckState[]): void;
   configuration(): void;
   maintenance(summary: MaintenanceSummary): void;
+  health(healthy: boolean): void;
+}
+
+export interface Logger {
+  info(message: string, ...rest: unknown[]): void;
+  warn(message: string, ...rest: unknown[]): void;
+  error(message: string, ...rest: unknown[]): void;
+}
+
+const silentLogger: Logger = {
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+};
+const noEvents: ApplicationEvents = {
+  status: () => undefined,
+  configuration: () => undefined,
+  maintenance: () => undefined,
+  health: () => undefined,
+};
+/** Consecutive persistence failures before the database is reported unhealthy. */
+const UNHEALTHY_AFTER_FAILURES = 3;
+const DAY_MS = 86_400_000;
+
+export interface ApplicationOptions {
+  events?: ApplicationEvents;
+  logger?: Logger;
+  adjacentConfigurationPath?: string;
+  /** Raw YAML for the bundled example configuration offered on first run. */
+  exampleConfigurationYaml?: string;
 }
 
 export class ApplicationService {
@@ -30,14 +62,25 @@ export class ApplicationService {
   readonly session: SessionSummary;
   readonly scheduler: Scheduler;
   readonly maintenance: MaintenanceEngine;
+  private events: ApplicationEvents;
+  private readonly logger: Logger;
+  private readonly adjacentConfigurationPath: string | undefined;
+  private readonly exampleConfigurationYaml: string | undefined;
   private heartbeatTimer?: ReturnType<typeof setInterval>;
+  private persistenceFailures = 0;
+  private databaseHealthy = true;
 
   constructor(
     readonly database: DatabaseService,
-    private events: ApplicationEvents,
-    private readonly adjacentConfigurationPath?: string,
+    options: ApplicationOptions = {},
   ) {
-    this.repositories = new Repositories(database.db, database.paths.database);
+    this.events = options.events ?? noEvents;
+    this.logger = options.logger ?? silentLogger;
+    this.adjacentConfigurationPath = options.adjacentConfigurationPath;
+    this.exampleConfigurationYaml = options.exampleConfigurationYaml;
+    this.repositories = new Repositories(database.db, database.paths.database, (message) =>
+      this.logger.warn(message),
+    );
     this.session = this.repositories.createSession(PRODUCT.version);
     const settings = this.repositories.getSettings();
     const targets = this.repositories.listTargets();
@@ -53,13 +96,20 @@ export class ApplicationService {
     }
     this.scheduler = new Scheduler(settings, targets, this.repositories.getLastKnownStates(), {
       onStatesChanged: (states) => this.events.status(states),
-      onResult: (targetId, checkId, result) =>
-        this.repositories.recordResult(this.session.id, targetId, checkId, result),
-      onPaused: (targetId, checkId) =>
-        this.repositories.recordPaused(this.session.id, targetId, checkId),
+      onResult: (targetId, checkId, result) => {
+        this.repositories.recordResult(this.session.id, targetId, checkId, result);
+        this.notePersistenceSuccess();
+      },
+      onPaused: (targetId, checkId) => {
+        this.repositories.recordPaused(this.session.id, targetId, checkId);
+        this.notePersistenceSuccess();
+      },
+      onError: (context, error) => this.notePersistenceFailure(context, error),
     });
-    this.maintenance = new MaintenanceEngine(this.repositories, (summary) =>
-      this.events.maintenance(summary),
+    this.maintenance = new MaintenanceEngine(
+      this.repositories,
+      (summary) => this.events.maintenance(summary),
+      (error) => this.logger.error('Maintenance failed', error),
     );
   }
 
@@ -70,7 +120,32 @@ export class ApplicationService {
   start(): void {
     this.scheduler.start();
     this.maintenance.start(this.repositories.getSettings());
-    this.heartbeatTimer = setInterval(() => this.repositories.heartbeat(this.session.id), 30_000);
+    this.heartbeatTimer = setInterval(() => {
+      try {
+        this.repositories.heartbeat(this.session.id);
+      } catch (error) {
+        this.notePersistenceFailure('heartbeat', error);
+      }
+    }, 30_000);
+    this.logger.info(`Session ${this.session.id} started (${PRODUCT.name} ${PRODUCT.version})`);
+  }
+
+  private notePersistenceSuccess(): void {
+    this.persistenceFailures = 0;
+    if (!this.databaseHealthy) {
+      this.databaseHealthy = true;
+      this.logger.info('Database writes recovered');
+      this.events.health(true);
+    }
+  }
+
+  private notePersistenceFailure(context: string, error: unknown): void {
+    this.persistenceFailures += 1;
+    this.logger.error(`Database write failed (${context})`, error);
+    if (this.databaseHealthy && this.persistenceFailures >= UNHEALTHY_AFTER_FAILURES) {
+      this.databaseHealthy = false;
+      this.events.health(false);
+    }
   }
 
   getSnapshot(): AppSnapshot {
@@ -79,8 +154,10 @@ export class ApplicationService {
       targets: this.repositories.listTargets(),
       states: this.scheduler.getStates(),
       session: this.session,
-      databaseHealthy: true,
+      databaseHealthy: this.databaseHealthy,
       pausedAll: this.scheduler.isPausedAll,
+      version: PRODUCT.version,
+      hasExampleConfiguration: Boolean(this.exampleConfigurationYaml),
       ...(this.adjacentConfigurationPath
         ? { adjacentConfigurationPath: this.adjacentConfigurationPath }
         : {}),
@@ -109,13 +186,24 @@ export class ApplicationService {
     this.refreshConfiguration();
   }
 
-  importFromFile(
-    filePath: string,
-    mode?: 'replace' | 'add-only',
+  importFromFile(filePath: string, mode?: ImportMode): ImportPreview | { imported: true } {
+    return this.importYaml(readFileSync(filePath, 'utf8'), filePath, mode);
+  }
+
+  importExample(mode?: ImportMode): ImportPreview | { imported: true } {
+    if (!this.exampleConfigurationYaml)
+      throw new OpossumError('NOT_FOUND', 'No example configuration is bundled with this build.');
+    return this.importYaml(this.exampleConfigurationYaml, 'opossum.example.yaml', mode);
+  }
+
+  private importYaml(
+    source: string,
+    label: string,
+    mode?: ImportMode,
   ): ImportPreview | { imported: true } {
-    const configuration = parseConfigurationYaml(readFileSync(filePath, 'utf8'));
+    const configuration = parseConfigurationYaml(source);
     const preview = previewImport(
-      filePath,
+      label,
       configuration,
       this.repositories.listTargets(),
       this.repositories.listTargets(true),
@@ -124,6 +212,7 @@ export class ApplicationService {
     if (mode === 'replace')
       this.repositories.replaceActiveConfiguration(configuration.app, configuration.targets);
     else this.repositories.addOnlyTargets(configuration.targets);
+    this.logger.info(`Imported configuration from ${label} (${mode})`);
     this.refreshConfiguration();
     return { imported: true };
   }
@@ -139,46 +228,65 @@ export class ApplicationService {
     );
   }
 
+  /** Resolves the [start, end] window for a timeline request. Returns undefined when no data can exist. */
+  private timelineWindow(
+    range: TimelineRange,
+    sessionId?: string,
+  ): { start: Date; end: Date } | undefined {
+    const now = new Date();
+    const sessionEnd = (session: SessionSummary): Date =>
+      new Date(session.endedAt ?? session.inferredEndAt ?? session.lastHeartbeatAt);
+    if (sessionId) {
+      const selected = this.repositories.sessions.get(sessionId);
+      if (!selected) return undefined;
+      return {
+        start: new Date(selected.startedAt),
+        end: selected.endedAt || selected.id !== this.session.id ? sessionEnd(selected) : now,
+      };
+    }
+    switch (range) {
+      case 'current':
+        return { start: new Date(this.session.startedAt), end: now };
+      case 'previous': {
+        const previous = this.repositories.sessions.latestOther(this.session.id);
+        return previous
+          ? { start: new Date(previous.startedAt), end: sessionEnd(previous) }
+          : undefined;
+      }
+      case '24h':
+        return { start: new Date(now.getTime() - DAY_MS), end: now };
+      case '7d':
+        return { start: new Date(now.getTime() - 7 * DAY_MS), end: now };
+      case '30d':
+        return { start: new Date(now.getTime() - 30 * DAY_MS), end: now };
+      case 'all':
+        return {
+          start: new Date(this.repositories.sessions.oldestStart() ?? this.session.startedAt),
+          end: now,
+        };
+    }
+  }
+
   getTimeline(
     targetId: string,
     checkId: string | undefined,
     range: TimelineRange,
     sessionId?: string,
   ): TimelineResult {
-    const sessions = this.repositories.listSessions(10_000);
-    const current = sessions.find((session) => session.id === this.session.id) ?? this.session;
-    const previous = sessions.find((session) => session.id !== this.session.id);
-    const end = new Date();
-    let start: Date;
-    let rangeEnd = end;
-    const selectedSession = sessionId
-      ? sessions.find((session) => session.id === sessionId)
-      : undefined;
-    if (selectedSession) {
-      start = new Date(selectedSession.startedAt);
-      rangeEnd = new Date(
-        selectedSession.endedAt ?? selectedSession.inferredEndAt ?? selectedSession.lastHeartbeatAt,
-      );
-    } else if (range === 'current') start = new Date(current.startedAt);
-    else if (range === 'previous' && previous) {
-      start = new Date(previous.startedAt);
-      rangeEnd = new Date(previous.endedAt ?? previous.inferredEndAt ?? previous.lastHeartbeatAt);
-    } else if (range === '24h') start = new Date(end.getTime() - 86_400_000);
-    else if (range === '7d') start = new Date(end.getTime() - 7 * 86_400_000);
-    else if (range === '30d') start = new Date(end.getTime() - 30 * 86_400_000);
-    else start = new Date(sessions.at(-1)?.startedAt ?? current.startedAt);
-    const raw = this.repositories.getTimeline(
-      targetId,
-      checkId,
-      start.toISOString(),
-      rangeEnd.toISOString(),
-    );
+    const window = this.timelineWindow(range, sessionId);
+    if (!window) {
+      const at = new Date().toISOString();
+      return { startAt: at, endAt: at, segments: [] };
+    }
+    const startAt = window.start.toISOString();
+    const endAt = window.end.toISOString();
+    const raw = this.repositories.getTimeline(targetId, checkId, startAt, endAt);
     const base = checkId ? raw : aggregateTargetTimeline(raw);
-    const segments = addOfflineGaps(base, start.toISOString(), rangeEnd.toISOString());
+    const segments = addOfflineGaps(base, startAt, endAt);
     const availability = observedAvailability(segments);
     return {
-      startAt: start.toISOString(),
-      endAt: rangeEnd.toISOString(),
+      startAt,
+      endAt,
       segments,
       ...(availability === undefined ? {} : { observedAvailability: availability }),
     };
@@ -187,22 +295,31 @@ export class ApplicationService {
   previewPurge(options: PurgeOptions): PurgePreview {
     return this.repositories.previewPurge(options);
   }
+
   purge(options: PurgeOptions): MaintenanceSummary {
     const result = this.repositories.purgeHistory(options);
     this.events.maintenance(result);
-    return result;
-  }
-  async optimize(fullVacuum: boolean): Promise<MaintenanceSummary> {
-    const wasPaused = this.scheduler.isPausedAll;
-    if (fullVacuum && !wasPaused) {
-      this.scheduler.pauseAllChecks();
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    if (result.error) {
+      this.logger.error('Manual purge failed', result.error);
+      throw new OpossumError('DATABASE', `History purge failed: ${result.error}`, result);
     }
-    const result = this.repositories.optimize(fullVacuum);
-    if (fullVacuum && !wasPaused) this.scheduler.resumeAllChecks();
-    this.events.maintenance(result);
     return result;
   }
+
+  /**
+   * better-sqlite3 serialises every statement on one connection, so a vacuum cannot interleave
+   * with check writes; there is no need to pause monitoring and disturb the timeline for it.
+   */
+  optimize(fullVacuum: boolean): MaintenanceSummary {
+    const result = this.repositories.optimize(fullVacuum);
+    this.events.maintenance(result);
+    if (result.error) {
+      this.logger.error('Optimization failed', result.error);
+      throw new OpossumError('DATABASE', `Optimization failed: ${result.error}`, result);
+    }
+    return result;
+  }
+
   getStats(): DatabaseStats {
     return this.repositories.getDatabaseStats();
   }
@@ -211,7 +328,12 @@ export class ApplicationService {
     this.maintenance.stop();
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     await this.scheduler.stop();
-    this.repositories.closeSession(this.session.id);
+    try {
+      this.repositories.closeSession(this.session.id);
+    } catch (error) {
+      this.logger.error('Could not close session cleanly', error);
+    }
     this.database.close();
+    this.logger.info(`Session ${this.session.id} closed`);
   }
 }

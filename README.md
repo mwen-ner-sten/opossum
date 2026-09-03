@@ -9,7 +9,9 @@ OPOSSUM is a local, on-demand Windows endpoint monitor. Open it to check hosts, 
 - Starts enabled checks immediately and repeats them at configured intervals while the window is open.
 - Runs ICMP ping, TCP connection, and HTTP/HTTPS response checks.
 - Enforces global concurrency and prevents the same check from overlapping itself.
-- Supports manual runs and session-only pause/resume controls.
+- Supports manual runs and session-only pause/resume controls. Pausing everything keeps individually paused checks paused when monitoring resumes.
+- Schedules each check from the start of its previous run, so a slow or failing endpoint does not stretch its own interval.
+- Optionally requires several consecutive failures before a check turns FAIL (`failures_before_fail`), so one lost packet does not create a new history interval.
 - Stores configuration, sessions, compressed status intervals, and last-known results in local SQLite.
 - Shows previous sessions and explicitly renders time between sessions as **Not monitoring**.
 - Imports and exports deterministic YAML configuration without exporting results or resolved secrets.
@@ -32,15 +34,17 @@ All application data remains under:
   logs\
 ```
 
-Use **Data & history → Open data folder** or the File menu to open this location. If `opossum.yaml` is beside a packaged portable executable on first launch, OPOSSUM offers to preview and import it. The source file is never treated as live configuration.
+Use **Data & history → Open data folder** or the File menu to open this location. If `opossum.yaml` is beside a packaged portable executable on first launch, OPOSSUM offers to preview and import it. The source file is never treated as live configuration. The first-run screen can also load the bundled example configuration, which uses documentation addresses you then edit.
+
+Only one OPOSSUM instance runs at a time; launching a second copy focuses the existing window instead of opening a second session against the same database.
 
 ## Configure targets and checks
 
 Use **Configuration → Add target**. A target has a stable ID, display name, hostname or IP address, optional group and description, and one or more checks. IDs use letters, numbers, dots, underscores, and dashes.
 
-Checks inherit the application interval and timeout unless overridden:
+Hosts must be an IPv4 address, an IPv6 address, or a valid hostname; values that `ping.exe` could read as a flag are rejected. Checks inherit the application interval and timeout unless overridden, and every check may set `failures_before_fail` (1 to 10, default 1):
 
-- **Ping** sends one Windows ICMP echo request and records a reliably parsed round-trip time.
+- **Ping** sends one Windows ICMP echo request and records a reliably parsed round-trip time. A reply must carry a TTL to count as PASS; "Destination host unreachable" answers from a router are reported as failures even though `ping.exe` exits successfully for them.
 - **TCP** resolves the target host and opens then immediately closes the configured port.
 - **HTTP** supports GET or HEAD, status values/lists/ranges, required or forbidden case-sensitive text, static non-secret headers, redirects, optional TLS-verification override, and Basic or Digest authentication.
 
@@ -86,7 +90,7 @@ Before a new session has a result, the interface may show the prior result with 
 
 Defaults are 180 days and 250 MiB. Set either value to `0` to disable that guard.
 
-Bounded maintenance runs at startup and every six hours in a long session. It first trims or removes eligible closed history older than the age cutoff. If the SQLite database plus WAL/SHM files still exceed the size guard, it removes oldest closed sessions toward 85% of the limit. Active configuration, the current session, and last-known state are protected. If current-session data alone exceeds the limit, OPOSSUM warns and keeps operating.
+Bounded maintenance runs shortly after startup (after the first checks are queued) and every six hours in a long session. It yields to the event loop between batches, keeps the last 200 maintenance summaries, and only raises a notice when it actually removed something or failed. It first trims or removes eligible closed history older than the age cutoff. If the SQLite database plus WAL/SHM files still exceed the size guard, it removes oldest closed sessions toward 85% of the limit. Active configuration, the current session, and last-known state are protected. If current-session data alone exceeds the limit, OPOSSUM warns and keeps operating.
 
 The **Data & history** workspace can:
 
@@ -96,9 +100,9 @@ The **Data & history** workspace can:
 - delete selected closed sessions;
 - remove soft-deleted definitions only when no history or last-known state references them;
 - checkpoint the WAL, run `PRAGMA optimize`, and perform bounded incremental vacuuming;
-- explicitly run a full vacuum, which pauses new checks and may temporarily require additional disk space.
+- explicitly run a full vacuum, which rewrites the database file and may temporarily require additional disk space. Checks keep running; SQLite serialises the work on the single connection.
 
-Configuration is not deleted by history actions. A migration that changes stored data creates a recoverable database backup first, retaining the latest three migration backups.
+Deleting a session that still supplies a check's last-known result is allowed; the result is kept and simply no longer points at a session. Configuration is not deleted by history actions. A migration that changes stored data creates a recoverable database backup first, retaining the latest three migration backups.
 
 ## Development
 
@@ -112,14 +116,12 @@ npm run dev
 Quality checks:
 
 ```powershell
-npm run format:check
-npm run lint
-npm run typecheck
-npm test
-npm run test:e2e
+npm run check          # format:check + lint + typecheck + unit/integration tests
+npm run test:coverage  # same tests with the 80% coverage gate used in CI
+npm run test:e2e       # builds, then drives the packaged renderer with Playwright
 ```
 
-Tests use temporary SQLite databases, process mocks, and local TCP/HTTP servers. They do not require public internet access.
+Tests use temporary SQLite databases, a mocked `ping.exe`, and local TCP/HTTP servers. They do not require public internet access. The GitHub Actions workflow in `.github/workflows/ci.yml` runs the same steps on `windows-latest` and uploads the portable build.
 
 Build the portable application:
 
@@ -136,7 +138,10 @@ The artifact is written to `release\`. Electron Builder rebuilds the native SQLi
 - **TCP connection refused:** the host answered but nothing accepted the configured port.
 - **HTTP timeout:** increase the per-check timeout only after confirming the endpoint is expected to respond slowly.
 - **TLS certificate validation failed:** fix the certificate trust/name problem. Disable verification only for endpoints where that risk is understood.
+- **HTTP connection refused / Host not found / TLS certificate validation failed:** these are now distinguished from generic network errors; the diagnostic names the cause.
 - **Authentication variables are not set:** launch OPOSSUM from an environment containing the configured username/password variables.
+- **Database writes failing:** the header turns red after three consecutive failed writes and results are shown live without being saved. Check free disk space and `logs\opossum.log`, then restart OPOSSUM.
+- **Database is newer than this build:** a database written by a later OPOSSUM refuses to open. Upgrade, or restore a backup from `backups\`.
 - **Database cannot be opened or migrated:** close other tools using the database, inspect `logs\opossum.log`, and preserve the database plus `backups\` before attempting recovery.
 - **Database remains above its size guard:** the current session or SQLite free pages may account for the size. Run bounded optimization or explicitly choose full vacuum.
 

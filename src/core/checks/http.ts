@@ -3,9 +3,16 @@ import { Agent, fetch, type Response } from 'undici';
 import { isExpectedHttpStatus, type HttpCheckConfig } from '../config';
 import type { CheckResult } from '../models';
 import type { CheckContext, CheckRunner } from './base';
-import { categoryForNetworkError, completeResult, timeoutMs } from './base';
+import { categoryForNetworkError, completeResult, rootErrorMessage, timeoutMs } from './base';
 
 const BODY_LIMIT = 1024 * 1024;
+
+/** One shared dispatcher for checks that disable TLS verification; created lazily, never per request. */
+let insecureAgent: Agent | undefined;
+function insecureDispatcher(): Agent {
+  insecureAgent ??= new Agent({ connect: { rejectUnauthorized: false } });
+  return insecureAgent;
+}
 
 function credentials(
   check: HttpCheckConfig,
@@ -90,9 +97,7 @@ async function readBounded(body: Response['body']): Promise<{ text: string; byte
 
 async function executeRequest(context: CheckContext, authorization?: string): Promise<Response> {
   const check = context.check as HttpCheckConfig;
-  const dispatcher = check.verify_tls
-    ? undefined
-    : new Agent({ connect: { rejectUnauthorized: false } });
+  const dispatcher = check.verify_tls ? undefined : insecureDispatcher();
   const headers = { ...check.headers, ...(authorization ? { authorization } : {}) };
   const signal = AbortSignal.any([context.signal, AbortSignal.timeout(timeoutMs(context))]);
   return await fetch(check.url, {
@@ -180,14 +185,14 @@ export const runHttpCheck: CheckRunner = async (context) => {
     );
   } catch (error) {
     const category = categoryForNetworkError(error);
-    const summary =
-      category === 'tls'
-        ? 'TLS certificate validation failed'
-        : category === 'timeout'
-          ? `HTTP timed out after ${(timeoutMs(context) / 1000).toFixed(1)} s`
-          : category === 'canceled'
-            ? 'HTTP check canceled'
-            : `HTTP request failed: ${error instanceof Error ? error.message : 'Unknown network error'}`;
+    const summaries: Partial<Record<typeof category, string>> = {
+      tls: 'TLS certificate validation failed',
+      timeout: `HTTP timed out after ${(timeoutMs(context) / 1000).toFixed(1)} s`,
+      canceled: 'HTTP check canceled',
+      dns: 'Host not found',
+      connection_refused: 'HTTP connection refused',
+    };
+    const summary = summaries[category] ?? `HTTP request failed: ${rootErrorMessage(error)}`;
     return completeResult(
       started,
       'FAIL',

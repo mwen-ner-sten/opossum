@@ -70,6 +70,8 @@ export interface AppSnapshot {
   session: SessionSummary;
   databaseHealthy: boolean;
   pausedAll: boolean;
+  version: string;
+  hasExampleConfiguration: boolean;
   adjacentConfigurationPath?: string;
 }
 export interface SaveCheckInput {
@@ -81,7 +83,10 @@ export interface ExportOptions {
   targetIds?: string[];
 }
 export interface ImportOptions {
+  /** A path previously returned by the file dialog or the adjacent-configuration prompt. */
   filePath?: string;
+  /** Import the example configuration bundled with the application instead of a file. */
+  example?: boolean;
   mode?: ImportMode;
   previewOnly?: boolean;
 }
@@ -131,6 +136,7 @@ export interface OpossumApi {
   onStatusChanged(callback: (states: LiveCheckState[]) => void): () => void;
   onConfigurationChanged(callback: () => void): () => void;
   onMaintenanceChanged(callback: (summary: MaintenanceSummary) => void): () => void;
+  onHealthChanged(callback: (healthy: boolean) => void): () => void;
 }
 
 export const idArgumentSchema = z.string().min(1).max(80);

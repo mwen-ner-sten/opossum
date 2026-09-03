@@ -55,4 +55,5 @@ export const api: OpossumApi = {
   onStatusChanged: (callback) => event(IPC.statusChanged, callback),
   onConfigurationChanged: (callback) => event(IPC.configurationChanged, callback),
   onMaintenanceChanged: (callback) => event(IPC.maintenanceChanged, callback),
+  onHealthChanged: (callback) => event(IPC.healthChanged, callback),
 };
