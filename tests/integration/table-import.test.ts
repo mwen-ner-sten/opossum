@@ -11,7 +11,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function setup() {
+function setup() {
   const directory = mkdtempSync(join(tmpdir(), 'opossum-table-import-'));
   const database = new DatabaseService({
     database: join(directory, 'opossum.db'),
@@ -48,7 +48,7 @@ const template: CheckTemplate = {
 
 describe('table import through the application service', () => {
   it('opens a CSV as a mappable table with a suggested mapping', async () => {
-    const { application, directory } = await setup();
+    const { application, directory } = setup();
     const file = join(directory, 'sites.csv');
     writeFileSync(file, 'Site Name,IP Address,Region,Web Port\nChicago,10.0.0.1,Chicago,443\n');
     const result = await application.importFromFile(file);
@@ -64,7 +64,7 @@ describe('table import through the application service', () => {
   });
 
   it('previews, reports skipped rows, and applies targets linked to a template', async () => {
-    const { application, directory } = await setup();
+    const { application, directory } = setup();
     application.saveTemplate(template);
     const file = join(directory, 'sites.csv');
     writeFileSync(
@@ -95,7 +95,7 @@ describe('table import through the application service', () => {
   });
 
   it('builds a table from pasted text and refuses to apply when nothing maps', async () => {
-    const { application } = await setup();
+    const { application } = setup();
     const source = application.importFromText('name\thost\nA\t10.0.0.9\n');
     expect(source.format).toBe('tsv');
     expect(source.columns).toEqual(['name', 'host']);
@@ -108,7 +108,7 @@ describe('table import through the application service', () => {
   });
 
   it('exports templates and own checks only, and round-trips through YAML import', async () => {
-    const { application, directory } = await setup();
+    const { application, directory } = setup();
     application.saveTemplate(template);
     application.saveTarget({
       id: 'a',
