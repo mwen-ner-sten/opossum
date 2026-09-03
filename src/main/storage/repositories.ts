@@ -375,10 +375,8 @@ export class Repositories {
     const timestamp = now();
     this.db.transaction(() => {
       this.db
-        .prepare(
-          'UPDATE status_intervals SET ended_at=last_observation_at WHERE session_id=? AND ended_at IS NULL',
-        )
-        .run(sessionId);
+        .prepare('UPDATE status_intervals SET ended_at=? WHERE session_id=? AND ended_at IS NULL')
+        .run(timestamp, sessionId);
       this.db
         .prepare('UPDATE sessions SET ended_at=?, last_heartbeat_at=?, clean_shutdown=1 WHERE id=?')
         .run(timestamp, timestamp, sessionId);
@@ -478,7 +476,7 @@ export class Repositories {
         if (active)
           this.db
             .prepare('UPDATE status_intervals SET ended_at=? WHERE id=?')
-            .run(result.startedAt, active.id);
+            .run(result.completedAt, active.id);
         this.db
           .prepare(
             `INSERT INTO status_intervals(id,session_id,target_internal_id,check_internal_id,started_at,last_observation_at,status,
@@ -490,7 +488,7 @@ export class Repositories {
             sessionId,
             targetInternalId,
             checkInternalId,
-            result.startedAt,
+            result.completedAt,
             result.completedAt,
             result.status,
             result.category,

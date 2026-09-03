@@ -89,4 +89,52 @@ describe('scheduler', () => {
     });
     await scheduler.stop();
   });
+
+  it('finishes an active run before entering a paused interval', async () => {
+    let finish: (() => void) | undefined;
+    let pausedRecords = 0;
+    CHECK_RUNNERS.ping = async () => {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const stamp = new Date().toISOString();
+      return {
+        status: 'PASS',
+        category: 'success',
+        summary: 'OK',
+        startedAt: stamp,
+        completedAt: stamp,
+        durationMs: 1,
+      };
+    };
+    const scheduler = new Scheduler(
+      DEFAULT_SETTINGS,
+      [
+        {
+          id: 'one',
+          name: 'One',
+          host: 'localhost',
+          enabled: true,
+          checks: [{ id: 'ping', name: 'Ping', type: 'ping', enabled: true, tags: [] }],
+        },
+      ],
+      [],
+      {
+        onStatesChanged: () => undefined,
+        onResult: () => undefined,
+        onPaused: () => {
+          pausedRecords += 1;
+        },
+      },
+    );
+    scheduler.start();
+    await tick();
+    scheduler.pauseCheck('one', 'ping');
+    expect(scheduler.getStates()[0]?.status).toBe('CHECKING');
+    finish?.();
+    await tick();
+    expect(scheduler.getStates()[0]?.status).toBe('PAUSED');
+    expect(pausedRecords).toBe(1);
+    await scheduler.stop();
+  });
 });

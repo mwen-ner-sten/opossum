@@ -122,6 +122,9 @@ void app.whenReady().then(() => {
       ]),
     );
     application.start();
+    if (process.env.OPOSSUM_SMOKE_TEST === '1') {
+      setTimeout(() => window?.close(), 1_000);
+    }
   } catch (error) {
     log.error('Startup failed', error);
     void import('electron').then(({ dialog }) =>

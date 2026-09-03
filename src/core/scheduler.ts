@@ -16,6 +16,7 @@ interface Entry {
   controller?: AbortController | undefined;
   running: boolean;
   manualQueued: boolean;
+  pausedByUser: boolean;
 }
 
 const keyFor = (targetId: string, checkId: string): string => `${targetId}\0${checkId}`;
@@ -62,14 +63,20 @@ export class Scheduler {
       for (const check of target.checks) {
         const key = keyFor(target.id, check.id);
         wanted.add(key);
-        const paused = !target.enabled || !check.enabled || this.pausedAll;
+        const paused =
+          !target.enabled ||
+          !check.enabled ||
+          this.pausedAll ||
+          Boolean(this.entries.get(key)?.pausedByUser);
         const existing = this.entries.get(key);
         if (existing) {
           existing.target = target;
           existing.check = check;
-          if (paused && !existing.running)
+          if (paused && !existing.running) {
+            if (existing.state.status !== 'PAUSED')
+              void this.callbacks.onPaused(target.id, check.id);
             existing.state = { ...existing.state, status: 'PAUSED', nextRunAt: undefined };
-          else if (!paused && existing.state.status === 'PAUSED') {
+          } else if (!paused && existing.state.status === 'PAUSED') {
             existing.state = { ...existing.state, status: 'UNKNOWN' };
             if (this.started) this.schedule(existing, 0);
           }
@@ -80,6 +87,7 @@ export class Scheduler {
             check,
             running: false,
             manualQueued: false,
+            pausedByUser: false,
             state: {
               targetId: target.id,
               checkId: check.id,
@@ -125,8 +133,10 @@ export class Scheduler {
   pauseCheck(targetId: string, checkId: string): void {
     const entry = this.entries.get(keyFor(targetId, checkId));
     if (!entry) return;
+    entry.pausedByUser = true;
     if (entry.timer) clearTimeout(entry.timer);
     entry.manualQueued = false;
+    if (entry.running) return;
     entry.state = { ...entry.state, status: 'PAUSED', nextRunAt: undefined, isHistorical: false };
     void this.callbacks.onPaused(targetId, checkId);
     this.publish();
@@ -134,7 +144,8 @@ export class Scheduler {
 
   resumeCheck(targetId: string, checkId: string): void {
     const entry = this.entries.get(keyFor(targetId, checkId));
-    if (!entry || !entry.target.enabled || !entry.check.enabled) return;
+    if (!entry || !entry.target.enabled || !entry.check.enabled || this.pausedAll) return;
+    entry.pausedByUser = false;
     entry.state = { ...entry.state, status: 'UNKNOWN', isHistorical: false };
     this.schedule(entry, 0);
     this.publish();
@@ -238,6 +249,7 @@ export class Scheduler {
       this.pausedAll ||
       !entry.target.enabled ||
       !entry.check.enabled ||
+      entry.pausedByUser ||
       entry.state.status === 'PAUSED';
     entry.state = {
       ...entry.state,
@@ -247,7 +259,8 @@ export class Scheduler {
     };
     const rerun = entry.manualQueued;
     entry.manualQueued = false;
-    if (!paused && !this.stopped)
+    if (paused) await this.callbacks.onPaused(entry.target.id, entry.check.id);
+    else if (!this.stopped)
       this.schedule(entry, rerun ? 0 : effectiveInterval(entry.check, this.settings) * 1_000);
     this.publish();
   }

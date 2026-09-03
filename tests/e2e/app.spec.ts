@@ -56,7 +56,25 @@ test('first run, local monitoring, clean close, and last-known restoration', asy
 
 test('keyboard navigation reaches primary workspaces', async () => {
   const window = await launch();
-  await window.getByRole('button', { name: 'History', exact: true }).click();
+  const monitorButton = window.getByRole('button', { name: 'Monitor', exact: true });
+  const historyButton = window.getByRole('button', { name: 'History', exact: true });
+  await monitorButton.focus();
+  await window.keyboard.press('Tab');
+  await expect(historyButton).toBeFocused();
+  expect(
+    await window.evaluate(() => ({
+      require: typeof (globalThis as unknown as Record<string, unknown>).require,
+      process: typeof (globalThis as unknown as Record<string, unknown>).process,
+    })),
+  ).toEqual({ require: 'undefined', process: 'undefined' });
+  await expect(
+    window.evaluate(() =>
+      (
+        globalThis as unknown as { opossum: { runCheck(a: string, b: string): Promise<void> } }
+      ).opossum.runCheck('', ''),
+    ),
+  ).rejects.toThrow();
+  await historyButton.click();
   await expect(window.getByRole('heading', { name: 'Monitoring sessions' })).toBeVisible();
   await window.getByRole('button', { name: 'Data & history', exact: true }).click();
   await expect(window.getByRole('heading', { name: 'Storage and retention' })).toBeVisible();

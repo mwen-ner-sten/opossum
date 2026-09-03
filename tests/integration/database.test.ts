@@ -104,6 +104,24 @@ describe('SQLite repositories', () => {
     database.close();
   });
 
+  it('recovers an unclean session at its final heartbeat boundary', () => {
+    const { database, repositories } = setup();
+    const abandoned = repositories.createSession('test');
+    database.close();
+    const reopened = new DatabaseService({
+      database: database.paths.database,
+      backups: database.paths.backups,
+    });
+    databases.push(reopened);
+    const recoveredRepositories = new Repositories(reopened.db, reopened.paths.database);
+    recoveredRepositories.createSession('test-2');
+    const recovered = recoveredRepositories
+      .listSessions()
+      .find((session) => session.id === abandoned.id);
+    expect(recovered).toMatchObject({ cleanShutdown: false });
+    expect(recovered?.endedAt).toBeTruthy();
+  });
+
   it('trims cutoff-crossing intervals while preserving configuration and last-known state', () => {
     const { database, repositories } = setup();
     repositories.saveTarget({
@@ -123,6 +141,11 @@ describe('SQLite repositories', () => {
       durationMs: 1,
     });
     repositories.closeSession(session.id);
+    database.db
+      .prepare(
+        "UPDATE status_intervals SET started_at='2026-01-01T00:00:00.000Z', ended_at='2026-01-03T00:00:00.000Z', last_observation_at='2026-01-03T00:00:00.000Z'",
+      )
+      .run();
     repositories.purgeHistory({ before: '2026-01-02T00:00:00.000Z' });
     const row = database.db.prepare('SELECT started_at FROM status_intervals').get() as {
       started_at: string;
