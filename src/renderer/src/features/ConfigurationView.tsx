@@ -1,6 +1,5 @@
 import { Copy, Download, Pencil, Plus, Power, Trash2 } from 'lucide-react';
 import type { TargetConfig } from '@core/config';
-import { StatusBadge } from '../components/StatusBadge';
 
 export function ConfigurationView({
   targets,
@@ -31,7 +30,7 @@ export function ConfigurationView({
       </div>
       <div className="configuration-list">
         {targets.map((target) => (
-          <article className="config-card" key={target.id}>
+          <article className={`config-card ${target.enabled ? '' : 'disabled'}`} key={target.id}>
             <div className="config-summary">
               <div>
                 <span className="target-icon">{target.name.slice(0, 2).toUpperCase()}</span>
@@ -43,7 +42,9 @@ export function ConfigurationView({
                   <p>{target.description || 'No description'}</p>
                 </div>
               </div>
-              <StatusBadge status={target.enabled ? 'UNKNOWN' : 'PAUSED'} subtle />
+              <span className={`type-pill ${target.enabled ? 'type-http' : 'type-off'}`}>
+                {target.enabled ? 'ENABLED' : 'DISABLED'}
+              </span>
             </div>
             <div className="config-checks">
               {target.checks.map((check) => (
@@ -53,7 +54,9 @@ export function ConfigurationView({
                   <code>{check.id}</code>
                   <small>
                     {check.enabled
-                      ? `${check.interval_seconds ?? 'Default'}s interval`
+                      ? check.interval_seconds
+                        ? `Every ${check.interval_seconds} s`
+                        : 'Default interval'
                       : 'Disabled'}
                   </small>
                 </div>

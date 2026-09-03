@@ -78,6 +78,9 @@ export function TargetEditor({
       tags: current.tags,
       ...(current.interval_seconds ? { interval_seconds: current.interval_seconds } : {}),
       ...(current.timeout_seconds ? { timeout_seconds: current.timeout_seconds } : {}),
+      ...(current.failures_before_fail
+        ? { failures_before_fail: current.failures_before_fail }
+        : {}),
     };
     const check: CheckConfig =
       type === 'ping'
@@ -129,9 +132,19 @@ export function TargetEditor({
             : 'Add target'
       }
       description="Configure the host and one or more checks. Changes become active immediately."
-      wide
+      variant="sheet"
+      footer={
+        <>
+          <button className="button ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="button primary" disabled={saving} onClick={() => void save()}>
+            {saving ? 'Saving…' : 'Save target'}
+          </button>
+        </>
+      }
     >
-      <div className="form-grid">
+      <div className="editor-block form-grid">
         <label>
           <span>Target ID</span>
           <input
@@ -210,23 +223,27 @@ export function TargetEditor({
       </div>
       <div className="check-editors">
         {draft.checks.map((check, index) => (
-          <div className="check-editor" key={`${index}-${check.id}`}>
-            <div className="check-number">
-              <span>{index + 1}</span>
+          <div className="check-editor" key={index}>
+            <div className="check-editor-head">
+              <span className="check-number">{index + 1}</span>
+              <strong>{check.name || 'Untitled check'}</strong>
+              <span className={`type-pill type-${check.type}`}>{check.type.toUpperCase()}</span>
+              {!check.enabled && <span className="disabled-tag">Disabled</span>}
               <button
                 className="icon-button danger"
                 aria-label={`Remove ${check.name}`}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      `Remove ${check.name}? Its existing history will remain available after you save.`,
-                    )
-                  )
-                    setDraft({
-                      ...draft,
-                      checks: draft.checks.filter((_, item) => item !== index),
-                    });
-                }}
+                disabled={draft.checks.length === 1}
+                title={
+                  draft.checks.length === 1
+                    ? 'A target needs at least one check'
+                    : 'Remove this check; its history stays available after saving'
+                }
+                onClick={() =>
+                  setDraft({
+                    ...draft,
+                    checks: draft.checks.filter((_, item) => item !== index),
+                  })
+                }
               >
                 <Trash2 size={16} />
               </button>
@@ -436,6 +453,23 @@ export function TargetEditor({
                   }
                 />
               </label>
+              <label>
+                <span>Failures before FAIL</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  placeholder="1"
+                  value={check.failures_before_fail ?? ''}
+                  onChange={(event) =>
+                    updateCheck(index, {
+                      failures_before_fail: event.target.value
+                        ? Number(event.target.value)
+                        : undefined,
+                    })
+                  }
+                />
+              </label>
               <label className="span-2">
                 <span>Tags (comma separated)</span>
                 <input
@@ -470,14 +504,6 @@ export function TargetEditor({
           ))}
         </div>
       )}
-      <div className="modal-actions">
-        <button className="button ghost" onClick={onClose}>
-          Cancel
-        </button>
-        <button className="button primary" disabled={saving} onClick={() => void save()}>
-          {saving ? 'Saving…' : 'Save target'}
-        </button>
-      </div>
     </Modal>
   );
 }

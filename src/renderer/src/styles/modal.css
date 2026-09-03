@@ -1,0 +1,254 @@
+/* Dialogs, the right-hand editor sheet, and the target editor internals. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(8 10 12 / 45%);
+  backdrop-filter: blur(2px);
+  animation: fade-in var(--fast) ease-out;
+  z-index: 20;
+}
+.modal {
+  position: fixed;
+  z-index: 21;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(520px, calc(100vw - 36px));
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 20px;
+  animation: modal-in 160ms var(--ease);
+}
+.modal-wide {
+  width: min(830px, calc(100vw - 36px));
+}
+.modal-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+.modal-heading h2 {
+  font-size: var(--text-lg);
+  margin: 0 0 4px;
+}
+.modal-heading p {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  margin: 0;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+/* Sheet variant: slides in from the right so the board stays visible while editing. */
+.modal.sheet {
+  left: auto;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  transform: none;
+  width: min(720px, calc(100vw - 48px));
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  border-width: 0 0 0 1px;
+  padding: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  animation: sheet-in 220ms var(--ease);
+}
+.modal.sheet .modal-heading {
+  margin: 0;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.modal.sheet .sheet-body {
+  overflow: auto;
+  padding: 20px 24px;
+  background: var(--bg);
+}
+.modal.sheet .modal-actions {
+  margin: 0;
+  padding: 14px 24px;
+  background: var(--surface);
+}
+
+/* --- Target editor --- */
+.editor-block {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+}
+.editor-block + .editor-block,
+.editor-block + .section-heading {
+  margin-top: 16px;
+}
+.editor-block .section-heading {
+  margin-bottom: 12px;
+}
+.check-editors {
+  display: grid;
+  gap: 10px;
+}
+.check-editor {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.check-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.check-editor-head .check-number {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--rail);
+  color: var(--rail-text-strong);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.check-editor-head strong {
+  font-size: var(--text-base);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.check-editor-head .disabled-tag {
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+.check-editor .form-grid {
+  padding: 14px;
+}
+.impact-preview,
+.import-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 9px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  padding: 14px;
+  border-radius: var(--radius);
+}
+.impact-preview strong {
+  color: var(--fail);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: var(--text-lg);
+  text-align: right;
+}
+.impact-preview span {
+  align-self: center;
+  color: var(--muted);
+}
+.import-grid {
+  grid-template-columns: repeat(4, 1fr);
+  text-align: center;
+}
+.import-grid div {
+  display: grid;
+  gap: 3px;
+}
+.import-grid strong {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: var(--text-xl);
+}
+.import-grid span {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+.import-modes {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+.mode-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 13px;
+  background: var(--surface);
+  text-align: left;
+  display: grid;
+  gap: 5px;
+  cursor: pointer;
+  transition:
+    border-color var(--fast) var(--ease),
+    background var(--fast) var(--ease);
+}
+.mode-card:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.mode-card span {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+.confirm-callout {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  background: var(--fail-soft);
+  color: var(--fail);
+  border-radius: var(--radius);
+}
+.confirm-callout.adjacent {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.confirm-callout strong {
+  overflow-wrap: anywhere;
+}
+.confirm-callout span {
+  font-size: var(--text-sm);
+}
+.error-detail {
+  max-width: 60ch;
+  white-space: pre-wrap;
+  color: var(--fail);
+  font-size: var(--text-sm);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 8px)) scale(0.99);
+  }
+}
+@keyframes sheet-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
