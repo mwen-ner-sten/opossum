@@ -1,0 +1,40 @@
+format_version: 1
+exported_at: 2026-09-03T00:00:00Z
+application_version: 0.1.0
+app:
+  default_interval_seconds: 30
+  default_timeout_seconds: 5
+  max_concurrent_checks: 20
+  history_max_age_days: 180
+  history_max_database_mb: 250
+  maintenance_on_startup: true
+targets:
+  - id: chi-bms-01
+    name: Chicago BMS Server 01
+    host: 10.20.30.40
+    group: Chicago
+    description: Primary EBO application server
+    enabled: true
+    checks:
+      - id: host-ping
+        name: Host ping
+        type: ping
+        enabled: true
+        tags: [infrastructure]
+      - id: rdp
+        name: Remote Desktop
+        type: tcp
+        port: 3389
+        enabled: true
+        tags: [remote-access]
+      - id: ebo-web
+        name: EBO WebStation
+        type: http
+        url: https://10.20.30.40/
+        method: GET
+        expected_status: [200, 401]
+        verify_tls: false
+        follow_redirects: true
+        timeout_seconds: 10
+        enabled: true
+        tags: [web]
