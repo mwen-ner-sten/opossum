@@ -14,16 +14,18 @@ import {
   Sun,
   Upload,
 } from 'lucide-react';
-import type { TargetConfig } from '@core/config';
-import type { AppSnapshot, ImportMode, ImportPreview } from '@shared/contracts';
+import type { CheckTemplate, TargetConfig } from '@core/config';
+import type { AppSnapshot, ImportMode, ImportPreview, TableImportSource } from '@shared/contracts';
 import { Brand } from './components/Brand';
 import { Modal } from './components/Modal';
 import { StatusStrip, type StatusCounts } from './components/StatusStrip';
 import { ConfigurationView } from './features/ConfigurationView';
 import { DataView } from './features/DataView';
 import { HistoryView } from './features/HistoryView';
+import { ImportBuilder } from './features/ImportBuilder';
 import { MonitorView } from './features/monitor/MonitorView';
 import { TargetEditor } from './features/TargetEditor';
+import { TemplateEditor } from './features/TemplateEditor';
 import { applyTheme, readStoredTheme, watchSystemTheme, type ThemePreference } from './theme';
 
 type View = 'monitor' | 'history' | 'configuration' | 'data';
@@ -32,6 +34,11 @@ const NOTICE_MS = 3_500;
 
 function isImportPreview(value: unknown): value is ImportPreview {
   return Boolean(value && typeof value === 'object' && 'newTargets' in value);
+}
+function isTableSource(value: unknown): value is TableImportSource {
+  return Boolean(
+    value && typeof value === 'object' && (value as { kind?: string }).kind === 'table',
+  );
 }
 
 function displayError(error: unknown): string {
@@ -61,6 +68,11 @@ export function App() {
     source: ImportSource;
   }>();
   const [adjacentPrompt, setAdjacentPrompt] = useState(false);
+  const [templateEditor, setTemplateEditor] = useState<{ template?: CheckTemplate }>();
+  const [deletingTemplate, setDeletingTemplate] = useState<CheckTemplate>();
+  const [tableImport, setTableImport] = useState<{ source: TableImportSource; text?: string }>();
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -151,6 +163,7 @@ export function App() {
           preview: result,
           source: source ?? { kind: 'file', filePath: result.filePath },
         });
+      else if (isTableSource(result)) setTableImport({ source: result });
     } catch (caught) {
       setError(displayError(caught));
     } finally {
@@ -169,6 +182,35 @@ export function App() {
       showNotice(
         source.kind === 'example' ? 'Example configuration loaded' : 'Configuration imported',
       );
+      await load();
+    } catch (caught) {
+      setError(displayError(caught));
+    } finally {
+      setBusy('');
+    }
+  };
+  const openPasted = async (): Promise<void> => {
+    setBusy('import');
+    setError('');
+    try {
+      const result = await window.opossum.importConfiguration({ text: pasteText });
+      if (isTableSource(result)) {
+        setPasteOpen(false);
+        setTableImport({ source: result, text: pasteText });
+      }
+    } catch (caught) {
+      setError(displayError(caught));
+    } finally {
+      setBusy('');
+    }
+  };
+  const deleteTemplate = async (): Promise<void> => {
+    if (!deletingTemplate) return;
+    setBusy('delete-template');
+    try {
+      await window.opossum.deleteTemplate(deletingTemplate.id);
+      setDeletingTemplate(undefined);
+      showNotice('Template deleted');
       await load();
     } catch (caught) {
       setError(displayError(caught));
@@ -393,6 +435,7 @@ export function App() {
         ) : view === 'configuration' ? (
           <ConfigurationView
             targets={snapshot.targets}
+            templates={snapshot.templates}
             onAdd={() => setEditor({})}
             onEdit={(target) => setEditor({ target })}
             onDuplicate={(target) => setEditor({ target, duplicate: true })}
@@ -402,6 +445,14 @@ export function App() {
                 .saveTarget({ ...target, enabled: !target.enabled })
                 .catch((caught: unknown) => setError(displayError(caught)))
             }
+            onNewTemplate={() => setTemplateEditor({})}
+            onEditTemplate={(template) => setTemplateEditor({ template })}
+            onDeleteTemplate={setDeletingTemplate}
+            onImport={() => void previewImport()}
+            onPaste={() => {
+              setPasteText('');
+              setPasteOpen(true);
+            }}
           />
         ) : (
           <DataView
@@ -417,9 +468,81 @@ export function App() {
         open={Boolean(editor)}
         target={editor?.target}
         duplicate={editor?.duplicate}
+        templates={snapshot.templates}
         onClose={() => setEditor(undefined)}
         onSaved={() => void load()}
       />
+      <TemplateEditor
+        open={Boolean(templateEditor)}
+        template={templateEditor?.template}
+        linkedCount={
+          snapshot.targets.filter((target) => target.template === templateEditor?.template?.id)
+            .length
+        }
+        onClose={() => setTemplateEditor(undefined)}
+        onSaved={(message) => {
+          showNotice(message);
+          void load();
+        }}
+      />
+      <ImportBuilder
+        source={tableImport?.source}
+        text={tableImport?.text}
+        templates={snapshot.templates}
+        onClose={() => setTableImport(undefined)}
+        onImported={(message) => {
+          showNotice(message);
+          void load();
+        }}
+        onError={showError}
+      />
+      <Modal
+        open={pasteOpen}
+        onOpenChange={setPasteOpen}
+        title="Paste a host list"
+        description="Paste rows copied from a spreadsheet or a CSV. The first line must be column headings such as name, host, group."
+      >
+        <textarea
+          className="paste-area"
+          aria-label="Pasted host list"
+          placeholder={
+            'name,host,group\nChicago BMS,10.20.30.40,Chicago\nDenver BMS,10.20.31.40,Denver'
+          }
+          value={pasteText}
+          onChange={(event) => setPasteText(event.target.value)}
+        />
+        <div className="modal-actions">
+          <button className="button ghost" onClick={() => setPasteOpen(false)}>
+            Cancel
+          </button>
+          <button
+            className="button primary"
+            disabled={!pasteText.trim() || busy === 'import'}
+            onClick={() => void openPasted()}
+          >
+            Open in import builder
+          </button>
+        </div>
+      </Modal>
+      <Modal
+        open={Boolean(deletingTemplate)}
+        onOpenChange={(value) => !value && setDeletingTemplate(undefined)}
+        title={`Delete template ${deletingTemplate?.name ?? ''}?`}
+        description="Templates can only be deleted when no target links to them. Targets that already inherited its checks are unaffected."
+      >
+        <div className="modal-actions">
+          <button className="button ghost" onClick={() => setDeletingTemplate(undefined)}>
+            Cancel
+          </button>
+          <button
+            className="button danger-button"
+            disabled={busy === 'delete-template'}
+            onClick={() => void deleteTemplate()}
+          >
+            {busy === 'delete-template' ? 'Deleting…' : 'Delete template'}
+          </button>
+        </div>
+      </Modal>
       <Modal
         open={adjacentPrompt}
         onOpenChange={setAdjacentPrompt}
@@ -500,6 +623,20 @@ export function App() {
             <strong>{importPreview?.preview.matchingChecks ?? 0}</strong>
             <span>matching checks</span>
           </div>
+          {(importPreview?.preview.newTemplates ?? 0) +
+            (importPreview?.preview.matchingTemplates ?? 0) >
+            0 && (
+            <>
+              <div>
+                <strong>{importPreview?.preview.newTemplates ?? 0}</strong>
+                <span>new templates</span>
+              </div>
+              <div>
+                <strong>{importPreview?.preview.matchingTemplates ?? 0}</strong>
+                <span>matching templates</span>
+              </div>
+            </>
+          )}
         </div>
         {importPreview?.preview.conflicts.length ? (
           <div className="warning-box">

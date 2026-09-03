@@ -151,6 +151,27 @@ export const migrations: Migration[] = [
       CREATE INDEX idx_maintenance_ended ON maintenance_runs(ended_at DESC);
     `,
   },
+  {
+    // Reusable check templates. Targets link to a template; the checks it generates are stored
+    // in the checks table like any other so history and last-known state keep working.
+    version: 4,
+    changesStoredData: false,
+    sql: `
+      CREATE TABLE templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        checks_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+      );
+      ALTER TABLE targets ADD COLUMN template_id TEXT;
+      ALTER TABLE targets ADD COLUMN vars_json TEXT;
+      ALTER TABLE checks ADD COLUMN template_id TEXT;
+      CREATE INDEX idx_targets_template ON targets(template_id);
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = migrations[migrations.length - 1]!.version;

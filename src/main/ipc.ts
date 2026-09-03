@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { dialog, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron';
-import { appSettingsSchema, checkSchema, targetSchema } from '@core/config';
+import { appSettingsSchema, checkSchema, checkTemplateSchema, targetSchema } from '@core/config';
+import { SUPPORTED_EXTENSIONS } from './transfer/sources';
 import { idArgumentSchema, pairArgumentSchema } from '@shared/contracts';
 import { OpossumError, serializeError } from '@shared/errors';
 import { IPC } from '@shared/ipc-channels';
@@ -9,8 +10,38 @@ import { ApplicationService } from './application';
 const importOptionsSchema = z.object({
   filePath: z.string().optional(),
   example: z.boolean().optional(),
+  text: z.string().max(5_000_000).optional(),
   mode: z.enum(['replace', 'add-only']).optional(),
   previewOnly: z.boolean().optional(),
+});
+const columnName = z.string().min(1).max(200);
+const importMappingSchema = z.object({
+  columns: z
+    .object({
+      id: columnName.optional(),
+      name: columnName.optional(),
+      host: columnName.optional(),
+      group: columnName.optional(),
+      description: columnName.optional(),
+      template: columnName.optional(),
+      enabled: columnName.optional(),
+    })
+    .strict(),
+  defaults: z
+    .object({
+      group: z.string().max(100).optional(),
+      template: z.string().max(80).optional(),
+      idPrefix: z.string().max(40).optional(),
+    })
+    .strict(),
+  vars: z.record(z.string().max(40), columnName),
+});
+const tableImportSchema = z.object({
+  filePath: z.string().optional(),
+  text: z.string().max(5_000_000).optional(),
+  sheet: z.string().max(200).optional(),
+  mapping: importMappingSchema,
+  mode: z.enum(['replace', 'add-only']).optional(),
 });
 const exportOptionsSchema = z.object({ targetIds: z.array(idArgumentSchema).optional() });
 const timelineSchema = z.object({
@@ -103,12 +134,18 @@ export function registerIpc(
   register(IPC.importConfiguration, importOptionsSchema, async (options) => {
     const mode = options.previewOnly ? undefined : options.mode;
     if (options.example) return application.importExample(mode);
+    if (options.text !== undefined) return application.importFromText(options.text);
     let filePath = options.filePath;
     if (!filePath) {
       const selected = await dialog.showOpenDialog({
-        title: 'Import OPOSSUM configuration',
+        title: 'Import configuration or target list',
         properties: ['openFile'],
-        filters: [{ name: 'YAML configuration', extensions: ['yaml', 'yml'] }],
+        filters: [
+          { name: 'All supported files', extensions: SUPPORTED_EXTENSIONS },
+          { name: 'OPOSSUM configuration', extensions: ['yaml', 'yml', 'json'] },
+          { name: 'Spreadsheets and tables', extensions: ['csv', 'tsv', 'txt', 'xlsx'] },
+          { name: 'Structured data', extensions: ['json', 'xml', 'yaml', 'yml'] },
+        ],
       });
       filePath = selected.filePaths[0];
       if (filePath) approvedImportPaths.add(filePath);
@@ -121,6 +158,21 @@ export function registerIpc(
       );
     return application.importFromFile(filePath, mode);
   });
+  const assertApprovedPath = (filePath: string | undefined): void => {
+    if (filePath && !approvedImportPaths.has(filePath))
+      throw new OpossumError('VALIDATION', 'Choose the file through the import dialog.');
+  };
+  register(IPC.previewTableImport, tableImportSchema, (options) => {
+    assertApprovedPath(options.filePath);
+    return application.previewTableImport(options);
+  });
+  register(IPC.applyTableImport, tableImportSchema, (options) => {
+    assertApprovedPath(options.filePath);
+    return application.applyTableImport(options);
+  });
+  register(IPC.listTemplates, z.undefined(), () => application.listTemplates());
+  register(IPC.saveTemplate, checkTemplateSchema, (template) => application.saveTemplate(template));
+  register(IPC.deleteTemplate, idArgumentSchema, (id) => application.deleteTemplate(id));
   register(IPC.exportConfiguration, exportOptionsSchema, async (options) => {
     const selected = await dialog.showSaveDialog({
       title: 'Export OPOSSUM configuration',

@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import type { AppSettings, CheckConfig, TargetConfig } from '@core/config';
+import type { AppSettings, CheckConfig, CheckTemplate, TargetConfig } from '@core/config';
+import type { ImportMapping, ImportRow, ImportRowIssue } from '@core/import-mapping';
 import type { LiveCheckState, SessionSummary, TimelineResult } from '@core/models';
 
 export type ImportMode = 'replace' | 'add-only';
@@ -15,9 +16,38 @@ export interface ImportPreview {
   matchingTargets: number;
   newChecks: number;
   matchingChecks: number;
+  newTemplates: number;
+  matchingTemplates: number;
   conflicts: ImportConflict[];
   configuration: { applicationVersion: string; exportedAt: string };
 }
+/** A tabular file (CSV, XLSX, JSON list, ...) that needs a column mapping before it can import. */
+export interface TableImportSource {
+  kind: 'table';
+  filePath: string;
+  format: string;
+  columns: string[];
+  rowCount: number;
+  /** First rows, for the mapping preview. */
+  sample: ImportRow[];
+  sheets?: string[];
+  sheet?: string;
+  suggestedMapping: ImportMapping;
+}
+export interface TableImportOptions {
+  filePath?: string | undefined;
+  /** Pasted delimited text instead of a file. */
+  text?: string | undefined;
+  sheet?: string | undefined;
+  mapping: ImportMapping;
+  mode?: ImportMode | undefined;
+}
+export interface TableImportPreview {
+  targets: TargetConfig[];
+  issues: ImportRowIssue[];
+  preview: ImportPreview;
+}
+export type ImportResult = ImportPreview | TableImportSource | { imported: true };
 export interface DatabaseStats {
   databaseBytes: number;
   walBytes: number;
@@ -66,6 +96,7 @@ export interface PurgePreview {
 export interface AppSnapshot {
   settings: AppSettings;
   targets: TargetConfig[];
+  templates: CheckTemplate[];
   states: LiveCheckState[];
   session: SessionSummary;
   databaseHealthy: boolean;
@@ -87,6 +118,8 @@ export interface ImportOptions {
   filePath?: string;
   /** Import the example configuration bundled with the application instead of a file. */
   example?: boolean;
+  /** Pasted delimited text (CSV or TSV) to open in the import builder. */
+  text?: string;
   mode?: ImportMode;
   previewOnly?: boolean;
 }
@@ -118,9 +151,12 @@ export interface OpossumApi {
   saveCheck(input: SaveCheckInput): Promise<void>;
   deleteTarget(targetId: string): Promise<void>;
   deleteCheck(targetId: string, checkId: string): Promise<void>;
-  importConfiguration(
-    options: ImportOptions,
-  ): Promise<ImportPreview | { imported: true } | undefined>;
+  importConfiguration(options: ImportOptions): Promise<ImportResult | undefined>;
+  previewTableImport(options: TableImportOptions): Promise<TableImportPreview>;
+  applyTableImport(options: TableImportOptions): Promise<{ imported: number }>;
+  listTemplates(): Promise<CheckTemplate[]>;
+  saveTemplate(template: CheckTemplate): Promise<{ relinked: number }>;
+  deleteTemplate(templateId: string): Promise<void>;
   exportConfiguration(options: ExportOptions): Promise<string | undefined>;
   getSessions(options?: SessionsOptions): Promise<SessionSummary[]>;
   getTimeline(options: TimelineOptions): Promise<TimelineResult>;

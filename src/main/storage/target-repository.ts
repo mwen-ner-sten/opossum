@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { checkSchema, targetSchema, type CheckConfig, type TargetConfig } from '@core/config';
+import {
+  checkSchema,
+  targetSchema,
+  type CheckConfig,
+  type CheckTemplate,
+  type TargetConfig,
+} from '@core/config';
+import { ownChecks, resolveChecks } from '@core/templates';
 import type { HistoricalDefinition } from '@shared/contracts';
 import { OpossumError } from '@shared/errors';
 import { now, placeholders, type Db, type InternalIds } from './sql';
@@ -12,6 +19,8 @@ interface TargetRow {
   group_name: string | null;
   description: string | null;
   enabled: number;
+  template_id: string | null;
+  vars_json: string | null;
   deleted_at: string | null;
 }
 interface CheckRow {
@@ -19,14 +28,24 @@ interface CheckRow {
   target_internal_id: string;
   config_id: string;
   config_json: string;
+  template_id: string | null;
   deleted_at: string | null;
 }
 
+export type TemplateResolver = (templateId: string) => CheckTemplate | undefined;
+
 export class TargetRepository {
+  private resolveTemplate: TemplateResolver = () => undefined;
+
   constructor(
     private readonly db: Db,
     private readonly onWarning: (message: string) => void = () => undefined,
   ) {}
+
+  /** Wires template lookup so linked targets can regenerate their inherited checks. */
+  setTemplateResolver(resolver: TemplateResolver): void {
+    this.resolveTemplate = resolver;
+  }
 
   list(includeDeleted = false): TargetConfig[] {
     const targets = this.db
@@ -39,7 +58,10 @@ export class TargetRepository {
     );
     return targets.flatMap((target) => {
       const checks = (checkQuery.all(target.internal_id) as CheckRow[]).flatMap((row) => {
-        const parsed = checkSchema.safeParse(JSON.parse(row.config_json));
+        const parsed = checkSchema.safeParse({
+          ...(JSON.parse(row.config_json) as object),
+          ...(row.template_id ? { from_template: row.template_id } : {}),
+        });
         if (parsed.success) return [parsed.data];
         // A stored check that no longer validates must not take the whole application down.
         this.onWarning(
@@ -54,6 +76,8 @@ export class TargetRepository {
         ...(target.group_name === null ? {} : { group: target.group_name }),
         ...(target.description === null ? {} : { description: target.description }),
         enabled: Boolean(target.enabled),
+        ...(target.template_id === null ? {} : { template: target.template_id }),
+        ...(target.vars_json === null ? {} : { vars: JSON.parse(target.vars_json) as unknown }),
         checks,
       });
       if (parsed.success) return [parsed.data];
@@ -76,18 +100,32 @@ export class TargetRepository {
     return { targetInternalId: target.internal_id, checkInternalId: check.internal_id };
   }
 
+  /**
+   * Persists a target. Own checks are written as given; when the target links to a template the
+   * inherited checks are (re)generated from it. With `replaceChecks`, active checks no longer
+   * present are soft-deleted so their history stays reachable.
+   */
   save(input: TargetConfig, replaceChecks = true): void {
     const target = targetSchema.parse(input);
+    const template = target.template ? this.resolveTemplate(target.template) : undefined;
+    if (target.template && !template)
+      throw new OpossumError('NOT_FOUND', `Template "${target.template}" was not found.`);
+    const own = ownChecks(target);
+    const effective = resolveChecks(target, template);
+    if (effective.length === 0)
+      throw new OpossumError('VALIDATION', 'A target needs at least one check.');
     this.db.transaction(() => {
       const existing = this.db
         .prepare('SELECT internal_id FROM targets WHERE config_id = ?')
         .get(target.id) as { internal_id: string } | undefined;
       const timestamp = now();
       const internalId = existing?.internal_id ?? randomUUID();
+      const vars =
+        target.vars && Object.keys(target.vars).length ? JSON.stringify(target.vars) : null;
       if (existing) {
         this.db
           .prepare(
-            `UPDATE targets SET name=?, host=?, group_name=?, description=?, enabled=?, updated_at=?, deleted_at=NULL WHERE internal_id=?`,
+            `UPDATE targets SET name=?, host=?, group_name=?, description=?, enabled=?, template_id=?, vars_json=?, updated_at=?, deleted_at=NULL WHERE internal_id=?`,
           )
           .run(
             target.name,
@@ -95,14 +133,16 @@ export class TargetRepository {
             target.group ?? null,
             target.description ?? null,
             Number(target.enabled),
+            target.template ?? null,
+            vars,
             timestamp,
             internalId,
           );
       } else {
         this.db
           .prepare(
-            `INSERT INTO targets(internal_id,config_id,name,host,group_name,description,enabled,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?)`,
+            `INSERT INTO targets(internal_id,config_id,name,host,group_name,description,enabled,template_id,vars_json,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
           )
           .run(
             internalId,
@@ -112,20 +152,29 @@ export class TargetRepository {
             target.group ?? null,
             target.description ?? null,
             Number(target.enabled),
+            target.template ?? null,
+            vars,
             timestamp,
             timestamp,
           );
       }
-      for (const check of target.checks) this.upsertCheck(internalId, check, undefined);
-      if (replaceChecks && target.checks.length > 0) {
-        const ids = target.checks.map((check) => check.id);
-        this.db
-          .prepare(
-            `UPDATE checks SET deleted_at=?, updated_at=? WHERE target_internal_id=? AND deleted_at IS NULL AND config_id NOT IN (${placeholders(ids.length)})`,
-          )
-          .run(timestamp, timestamp, internalId, ...ids);
-      }
+      for (const check of effective) this.upsertCheck(internalId, check, undefined);
+      // Inherited checks are always fully regenerated; own checks only when replacing.
+      const keep = (replaceChecks ? effective : [...own, ...effective]).map((check) => check.id);
+      const scope = replaceChecks ? '' : 'AND template_id IS NOT NULL';
+      this.db
+        .prepare(
+          `UPDATE checks SET deleted_at=?, updated_at=? WHERE target_internal_id=? AND deleted_at IS NULL ${scope} AND config_id NOT IN (${placeholders(keep.length)})`,
+        )
+        .run(timestamp, timestamp, internalId, ...keep);
     })();
+  }
+
+  /** Regenerates inherited checks for every active target linked to the template. */
+  rematerialize(templateId: string): number {
+    const linked = this.list().filter((target) => target.template === templateId);
+    for (const target of linked) this.save(target, true);
+    return linked.length;
   }
 
   saveCheck(targetId: string, checkInput: CheckConfig, originalCheckId?: string): void {
@@ -155,25 +204,27 @@ export class TargetRepository {
       if (conflict) throw new OpossumError('CONFLICT', `Check ID "${check.id}" already exists.`);
     }
     const timestamp = now();
+    const { from_template: templateId, ...stored } = check;
     if (existing) {
       this.db
         .prepare(
-          `UPDATE checks SET config_id=?, name=?, type=?, enabled=?, config_json=?, updated_at=?, deleted_at=NULL WHERE internal_id=?`,
+          `UPDATE checks SET config_id=?, name=?, type=?, enabled=?, config_json=?, template_id=?, updated_at=?, deleted_at=NULL WHERE internal_id=?`,
         )
         .run(
           check.id,
           check.name,
           check.type,
           Number(check.enabled),
-          JSON.stringify(check),
+          JSON.stringify(stored),
+          templateId ?? null,
           timestamp,
           existing.internal_id,
         );
     } else {
       this.db
         .prepare(
-          `INSERT INTO checks(internal_id,target_internal_id,config_id,name,type,enabled,config_json,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO checks(internal_id,target_internal_id,config_id,name,type,enabled,config_json,template_id,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           randomUUID(),
@@ -182,7 +233,8 @@ export class TargetRepository {
           check.name,
           check.type,
           Number(check.enabled),
-          JSON.stringify(check),
+          JSON.stringify(stored),
+          templateId ?? null,
           timestamp,
           timestamp,
         );

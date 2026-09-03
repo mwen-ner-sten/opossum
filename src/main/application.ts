@@ -1,5 +1,7 @@
-import { readFileSync, writeFileSync } from 'node:fs';
-import type { AppSettings, TargetConfig } from '@core/config';
+import { writeFileSync } from 'node:fs';
+import type { AppSettings, CheckTemplate, PortableConfiguration, TargetConfig } from '@core/config';
+import { autoDetectMapping, buildTargetsFromRows } from '@core/import-mapping';
+import { validateTemplate } from '@core/templates';
 import { Scheduler } from '@core/scheduler';
 import { addOfflineGaps, aggregateTargetTimeline, observedAvailability } from '@core/timeline';
 import type { LiveCheckState, SessionSummary, TimelineResult } from '@core/models';
@@ -8,9 +10,13 @@ import type {
   DatabaseStats,
   ImportMode,
   ImportPreview,
+  ImportResult,
   MaintenanceSummary,
   PurgeOptions,
   PurgePreview,
+  TableImportOptions,
+  TableImportPreview,
+  TableImportSource,
   TimelineRange,
 } from '@shared/contracts';
 import { OpossumError } from '@shared/errors';
@@ -19,7 +25,12 @@ import { DatabaseService } from './storage/database';
 import { MaintenanceEngine } from './storage/maintenance';
 import { Repositories } from './storage/repositories';
 import { exportConfigurationYaml } from './transfer/export';
-import { parseConfigurationYaml, previewImport } from './transfer/import';
+import {
+  parseConfigurationDocument,
+  parseConfigurationYaml,
+  previewImport,
+} from './transfer/import';
+import { parseDelimitedText, readImportSource, type TableSource } from './transfer/sources';
 
 export interface ApplicationEvents {
   status(states: LiveCheckState[]): void;
@@ -152,6 +163,7 @@ export class ApplicationService {
     return {
       settings: this.repositories.getSettings(),
       targets: this.repositories.listTargets(),
+      templates: this.repositories.listTemplates(),
       states: this.scheduler.getStates(),
       session: this.session,
       databaseHealthy: this.databaseHealthy,
@@ -186,8 +198,107 @@ export class ApplicationService {
     this.refreshConfiguration();
   }
 
-  importFromFile(filePath: string, mode?: ImportMode): ImportPreview | { imported: true } {
-    return this.importYaml(readFileSync(filePath, 'utf8'), filePath, mode);
+  listTemplates(): CheckTemplate[] {
+    return this.repositories.listTemplates();
+  }
+  /** Validates, saves, and regenerates every linked target. Returns how many were relinked. */
+  saveTemplate(input: unknown): { relinked: number } {
+    const { template, issues } = validateTemplate(input);
+    if (!template)
+      throw new OpossumError(
+        'VALIDATION',
+        `Template has ${issues.length} problem${issues.length === 1 ? '' : 's'}.`,
+        issues,
+      );
+    const relinked = this.repositories.saveTemplate(template);
+    this.logger.info(`Saved template ${template.id} (${relinked} linked targets regenerated)`);
+    this.refreshConfiguration();
+    return { relinked };
+  }
+  deleteTemplate(templateId: string): void {
+    this.repositories.deleteTemplate(templateId);
+    this.refreshConfiguration();
+  }
+
+  /**
+   * Opens any supported file. Full OPOSSUM configurations follow the classic preview/apply path;
+   * everything else comes back as a table for the import builder to map.
+   */
+  async importFromFile(filePath: string, mode?: ImportMode): Promise<ImportResult> {
+    const source = await readImportSource(filePath);
+    if (source.kind === 'configuration')
+      return this.importConfiguration(parseConfigurationDocument(source.document), filePath, mode);
+    return this.describeTable(filePath, source);
+  }
+
+  /** Opens pasted CSV or TSV text in the import builder. */
+  importFromText(text: string): TableImportSource {
+    const format = text.includes('\t') ? 'tsv' : 'csv';
+    return this.describeTable('', parseDelimitedText(text, format));
+  }
+
+  private describeTable(filePath: string, source: TableSource): TableImportSource {
+    return {
+      kind: 'table',
+      filePath,
+      format: source.format,
+      columns: source.columns,
+      rowCount: source.rows.length,
+      sample: source.rows.slice(0, 25),
+      ...(source.sheets ? { sheets: source.sheets } : {}),
+      ...(source.sheet ? { sheet: source.sheet } : {}),
+      suggestedMapping: autoDetectMapping(source.columns),
+    };
+  }
+
+  private async loadTable(options: TableImportOptions): Promise<TableSource> {
+    if (options.text)
+      return parseDelimitedText(options.text, options.text.includes('\t') ? 'tsv' : 'csv');
+    if (!options.filePath)
+      throw new OpossumError('VALIDATION', 'Choose a file or paste text first.');
+    const source = await readImportSource(options.filePath, options.sheet);
+    if (source.kind !== 'table')
+      throw new OpossumError(
+        'VALIDATION',
+        'This file is a full configuration; import it directly.',
+      );
+    return source;
+  }
+
+  /** Builds targets from the mapped table and reports how they would merge with local data. */
+  async previewTableImport(options: TableImportOptions): Promise<TableImportPreview> {
+    const source = await this.loadTable(options);
+    const templates = this.repositories.listTemplates();
+    const { targets, issues } = buildTargetsFromRows(source.rows, options.mapping, templates);
+    const preview = previewImport(
+      options.filePath ?? 'pasted text',
+      {
+        format_version: 1,
+        exported_at: new Date().toISOString(),
+        application_version: PRODUCT.version,
+        app: this.repositories.getSettings(),
+        templates: [],
+        targets,
+      },
+      this.repositories.listTargets(),
+      this.repositories.listTargets(true),
+      templates,
+    );
+    return { targets, issues, preview };
+  }
+
+  async applyTableImport(options: TableImportOptions): Promise<{ imported: number }> {
+    const { targets, issues } = await this.previewTableImport(options);
+    if (targets.length === 0)
+      throw new OpossumError('VALIDATION', 'No rows could be turned into targets.', issues);
+    if (options.mode === 'replace')
+      this.repositories.replaceActiveConfiguration(undefined, targets);
+    else this.repositories.addOnlyTargets(targets);
+    this.logger.info(
+      `Imported ${targets.length} targets from ${options.filePath ?? 'pasted text'} (${options.mode ?? 'add-only'})`,
+    );
+    this.refreshConfiguration();
+    return { imported: targets.length };
   }
 
   importExample(mode?: ImportMode): ImportPreview | { imported: true } {
@@ -201,17 +312,29 @@ export class ApplicationService {
     label: string,
     mode?: ImportMode,
   ): ImportPreview | { imported: true } {
-    const configuration = parseConfigurationYaml(source);
+    return this.importConfiguration(parseConfigurationYaml(source), label, mode);
+  }
+
+  private importConfiguration(
+    configuration: PortableConfiguration,
+    label: string,
+    mode?: ImportMode,
+  ): ImportPreview | { imported: true } {
     const preview = previewImport(
       label,
       configuration,
       this.repositories.listTargets(),
       this.repositories.listTargets(true),
+      this.repositories.listTemplates(),
     );
     if (!mode) return preview;
     if (mode === 'replace')
-      this.repositories.replaceActiveConfiguration(configuration.app, configuration.targets);
-    else this.repositories.addOnlyTargets(configuration.targets);
+      this.repositories.replaceActiveConfiguration(
+        configuration.app,
+        configuration.targets,
+        configuration.templates,
+      );
+    else this.repositories.addOnlyTargets(configuration.targets, configuration.templates);
     this.logger.info(`Imported configuration from ${label} (${mode})`);
     this.refreshConfiguration();
     return { imported: true };
@@ -223,7 +346,11 @@ export class ApplicationService {
       .filter((target) => !targetIds || targetIds.includes(target.id));
     writeFileSync(
       filePath,
-      exportConfigurationYaml(this.repositories.getSettings(), targets),
+      exportConfigurationYaml(
+        this.repositories.getSettings(),
+        targets,
+        this.repositories.listTemplates(),
+      ),
       'utf8',
     );
   }

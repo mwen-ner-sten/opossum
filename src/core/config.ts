@@ -41,7 +41,10 @@ const commonCheckFields = {
   /** Consecutive failures required before a check transitions to FAIL. Defaults to 1. */
   failures_before_fail: z.number().int().min(1).max(10).optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(30).default([]),
+  /** Set on checks generated from a linked template; such checks are read-only on the target. */
+  from_template: idSchema.optional(),
 };
+export const idPattern = idSchema;
 
 export const pingCheckSchema = z.object({ ...commonCheckFields, type: z.literal('ping') }).strict();
 export const tcpCheckSchema = z
@@ -63,47 +66,106 @@ const authSchema = z
     password_env: z.string().regex(/^[A-Z_][A-Z0-9_]*$/i),
   })
   .strict();
-export const httpCheckSchema = z
-  .object({
-    ...commonCheckFields,
-    type: z.literal('http'),
-    url: z
-      .url()
-      .refine((url) => ['http:', 'https:'].includes(new URL(url).protocol), 'Use HTTP or HTTPS'),
-    method: z.enum(['GET', 'HEAD']).default('GET'),
-    expected_status: expectedStatusSchema.default('200-399'),
-    contains: z.string().max(10_000).optional(),
-    not_contains: z.string().max(10_000).optional(),
-    headers: z.record(z.string(), z.string().max(4_096)).default({}),
-    verify_tls: z.boolean().default(true),
-    follow_redirects: z.boolean().default(true),
-    auth: authSchema.optional(),
-  })
-  .strict()
-  .superRefine((check, context) => {
-    for (const header of Object.keys(check.headers)) {
-      if (/^(authorization|cookie|proxy-authorization)$/i.test(header)) {
-        context.addIssue({
-          code: 'custom',
-          path: ['headers', header],
-          message: 'Secret headers are not allowed',
-        });
+const strictUrl = z.url().refine((url) => {
+  try {
+    return ['http:', 'https:'].includes(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}, 'Use a valid HTTP or HTTPS URL');
+/** Template URLs may hold placeholders, so only the scheme is checked before expansion. */
+const templateUrl = z
+  .string()
+  .trim()
+  .min(1)
+  .max(2_048)
+  .regex(/^https?:\/\//i, 'Use HTTP or HTTPS');
+
+function buildHttpCheckSchema<U extends z.ZodType<string>>(url: U) {
+  return z
+    .object({
+      ...commonCheckFields,
+      type: z.literal('http'),
+      url,
+      method: z.enum(['GET', 'HEAD']).default('GET'),
+      expected_status: expectedStatusSchema.default('200-399'),
+      contains: z.string().max(10_000).optional(),
+      not_contains: z.string().max(10_000).optional(),
+      headers: z.record(z.string(), z.string().max(4_096)).default({}),
+      verify_tls: z.boolean().default(true),
+      follow_redirects: z.boolean().default(true),
+      auth: authSchema.optional(),
+    })
+    .strict()
+    .superRefine((check, context) => {
+      for (const header of Object.keys(check.headers)) {
+        if (/^(authorization|cookie|proxy-authorization)$/i.test(header)) {
+          context.addIssue({
+            code: 'custom',
+            path: ['headers', header],
+            message: 'Secret headers are not allowed',
+          });
+        }
+        if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(header)) {
+          context.addIssue({
+            code: 'custom',
+            path: ['headers', header],
+            message: 'Invalid HTTP header name',
+          });
+        }
       }
-      if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(header)) {
-        context.addIssue({
-          code: 'custom',
-          path: ['headers', header],
-          message: 'Invalid HTTP header name',
-        });
-      }
-    }
-  });
+    });
+}
+export const httpCheckSchema = buildHttpCheckSchema(strictUrl);
+export const httpTemplateCheckSchema = buildHttpCheckSchema(templateUrl);
 
 export const checkSchema = z.discriminatedUnion('type', [
   pingCheckSchema,
   tcpCheckSchema,
   httpCheckSchema,
 ]);
+
+/** A check inside a template: identical to a check, except the URL may contain placeholders. */
+export const templateCheckSchema = z.discriminatedUnion('type', [
+  pingCheckSchema,
+  tcpCheckSchema,
+  httpTemplateCheckSchema,
+]);
+
+function uniqueCheckIds(checks: Array<{ id: string }>, context: z.RefinementCtx): void {
+  const seen = new Set<string>();
+  checks.forEach((check, index) => {
+    if (seen.has(check.id)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['checks', index, 'id'],
+        message: `Duplicate check ID "${check.id}"`,
+      });
+    }
+    seen.add(check.id);
+  });
+}
+
+/**
+ * A reusable set of checks. Targets that link to a template inherit every check in it with
+ * `{{host}}`, `{{name}}`, `{{id}}`, `{{group}}`, and `{{vars.<key>}}` substituted per target.
+ */
+export const checkTemplateSchema = z
+  .object({
+    id: idSchema,
+    name: z.string().trim().min(1).max(160),
+    description: z.string().trim().max(2_000).optional(),
+    checks: z.array(templateCheckSchema).min(1),
+  })
+  .strict()
+  .superRefine((template, context) => uniqueCheckIds(template.checks, context));
+
+const varsSchema = z
+  .record(
+    z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, 'Variable names use letters, digits, underscores'),
+    z.string().max(500),
+  )
+  .refine((vars) => Object.keys(vars).length <= 30, 'At most 30 variables per target');
 
 export const targetSchema = z
   .object({
@@ -113,21 +175,21 @@ export const targetSchema = z
     group: z.string().trim().max(100).optional(),
     description: z.string().trim().max(2_000).optional(),
     enabled: z.boolean().default(true),
-    checks: z.array(checkSchema).min(1),
+    /** ID of a template whose checks this target inherits. */
+    template: idSchema.optional(),
+    /** Per-target values available to template placeholders as `{{vars.<key>}}`. */
+    vars: varsSchema.optional(),
+    checks: z.array(checkSchema),
   })
   .strict()
   .superRefine((target, context) => {
-    const seen = new Set<string>();
-    target.checks.forEach((check, index) => {
-      if (seen.has(check.id)) {
-        context.addIssue({
-          code: 'custom',
-          path: ['checks', index, 'id'],
-          message: `Duplicate check ID "${check.id}"`,
-        });
-      }
-      seen.add(check.id);
-    });
+    uniqueCheckIds(target.checks, context);
+    if (target.checks.length === 0 && !target.template)
+      context.addIssue({
+        code: 'custom',
+        path: ['checks'],
+        message: 'Add at least one check or link a template',
+      });
   });
 
 export const portableConfigurationSchema = z
@@ -136,10 +198,21 @@ export const portableConfigurationSchema = z
     exported_at: z.iso.datetime({ offset: true }),
     application_version: z.string().min(1),
     app: appSettingsSchema,
+    templates: z.array(checkTemplateSchema).default([]),
     targets: z.array(targetSchema),
   })
   .strict()
   .superRefine((configuration, context) => {
+    const templateIds = new Set<string>();
+    configuration.templates.forEach((template, index) => {
+      if (templateIds.has(template.id))
+        context.addIssue({
+          code: 'custom',
+          path: ['templates', index, 'id'],
+          message: `Duplicate template ID "${template.id}"`,
+        });
+      templateIds.add(template.id);
+    });
     const seen = new Set<string>();
     configuration.targets.forEach((target, index) => {
       if (seen.has(target.id)) {
@@ -158,6 +231,8 @@ export type PingCheckConfig = z.infer<typeof pingCheckSchema>;
 export type TcpCheckConfig = z.infer<typeof tcpCheckSchema>;
 export type HttpCheckConfig = z.infer<typeof httpCheckSchema>;
 export type CheckConfig = z.infer<typeof checkSchema>;
+export type TemplateCheckConfig = z.infer<typeof templateCheckSchema>;
+export type CheckTemplate = z.infer<typeof checkTemplateSchema>;
 export type TargetConfig = z.infer<typeof targetSchema>;
 export type PortableConfiguration = z.infer<typeof portableConfigurationSchema>;
 

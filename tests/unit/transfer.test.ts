@@ -45,6 +45,7 @@ describe('YAML transfer', () => {
     const yaml = exportConfigurationYaml(
       DEFAULT_SETTINGS,
       targets,
+      [],
       new Date('2026-01-01T00:00:00Z'),
     );
     expect(yaml.indexOf('a-target')).toBeLessThan(yaml.indexOf('z-target'));

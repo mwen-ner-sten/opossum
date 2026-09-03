@@ -121,3 +121,41 @@ test('keyboard navigation reaches primary workspaces', async () => {
   await window.getByRole('button', { name: /Retention settings/ }).click();
   await expect(window.getByRole('heading', { name: 'Storage and retention' })).toBeVisible();
 });
+
+test('templates drive linked targets and the import builder creates sites from pasted rows', async () => {
+  const window = await launch();
+  await window.getByRole('button', { name: 'Load example configuration' }).click();
+  await window.getByRole('button', { name: /Replace active configuration/ }).click();
+  await expect(window.getByText('Denver BMS Server 01').first()).toBeVisible();
+
+  await window.getByRole('button', { name: 'Configuration', exact: true }).click();
+  await expect(window.getByText('2 linked targets')).toBeVisible();
+  await expect(window.getByText('From template', { exact: false }).first()).toBeVisible();
+
+  await window.getByRole('button', { name: /Paste list/ }).click();
+  await window
+    .getByLabel('Pasted host list')
+    .fill(
+      'Site Name,IP Address,Region,Web Port\nPhoenix BMS 01,10.20.40.40,Phoenix,443\nNo host,,Phoenix,443',
+    );
+  await window.getByRole('button', { name: /Open in import builder/ }).click();
+  const builder = window.getByRole('dialog', { name: 'Import builder' });
+  await expect(builder.getByLabel('Column for Host / IP (required)')).toHaveValue('IP Address');
+  await expect(builder.getByLabel('Default template')).toHaveValue('ebo-site');
+  await builder.getByRole('button', { name: /Review targets/ }).click();
+  await expect(builder.getByText('Row 2: No host value')).toBeVisible();
+  await builder.getByRole('button', { name: /Add 1 new targets/ }).click();
+  await expect(window.getByText('Imported 1 target')).toBeVisible();
+
+  await window.getByRole('button', { name: /^Monitor/ }).click();
+  await expect(window.getByText('Phoenix BMS 01').first()).toBeVisible();
+  await expect(window.getByText('phoenix-bms-01')).toHaveCount(0);
+  await window
+    .getByRole('button', { name: /Show details for Phoenix BMS 01 EBO WebStation/ })
+    .click();
+  await expect(
+    window
+      .getByRole('complementary', { name: 'Check details' })
+      .getByText('https://10.20.40.40:443/'),
+  ).toBeVisible();
+});

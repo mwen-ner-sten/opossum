@@ -8,6 +8,36 @@ app:
   history_max_age_days: 180
   history_max_database_mb: 250
   maintenance_on_startup: true
+# Templates are reusable check sets. Targets that set `template:` inherit every check with
+# {{host}}, {{name}}, {{id}}, {{group}}, and {{vars.<key>}} substituted per target.
+templates:
+  - id: ebo-site
+    name: EBO site server
+    description: Ping, Remote Desktop, and the WebStation login page
+    checks:
+      - id: host-ping
+        name: Host ping
+        type: ping
+        enabled: true
+        tags: [infrastructure]
+      - id: rdp
+        name: Remote Desktop
+        type: tcp
+        port: 3389
+        enabled: true
+        failures_before_fail: 2
+        tags: [remote-access]
+      - id: ebo-web
+        name: EBO WebStation
+        type: http
+        url: https://{{host}}:{{vars.web_port}}/
+        method: GET
+        expected_status: [200, 401]
+        verify_tls: false
+        follow_redirects: true
+        timeout_seconds: 10
+        enabled: true
+        tags: [web]
 targets:
   - id: chi-bms-01
     name: Chicago BMS Server 01
@@ -39,3 +69,29 @@ targets:
         timeout_seconds: 10
         enabled: true
         tags: [web]
+  - id: den-bms-01
+    name: Denver BMS Server 01
+    host: 10.20.31.40
+    group: Denver
+    description: Inherits every check from the ebo-site template
+    enabled: true
+    template: ebo-site
+    vars:
+      web_port: '443'
+    checks: []
+  - id: den-bms-02
+    name: Denver BMS Server 02
+    host: 10.20.31.41
+    group: Denver
+    enabled: true
+    template: ebo-site
+    vars:
+      web_port: '8443'
+    checks:
+      # An own check with the same ID overrides the inherited one.
+      - id: rdp
+        name: Remote Desktop (alternate port)
+        type: tcp
+        port: 33890
+        enabled: true
+        tags: [remote-access]

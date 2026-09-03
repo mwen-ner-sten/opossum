@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { AppSettings, CheckConfig, TargetConfig } from '@core/config';
+import type { AppSettings, CheckConfig, CheckTemplate, TargetConfig } from '@core/config';
 import type { CheckResult, LastKnownState, SessionSummary, TimelineSegment } from '@core/models';
 import type {
   DatabaseStats,
@@ -14,6 +14,7 @@ import { SessionRepository } from './session-repository';
 import { SettingsRepository } from './settings-repository';
 import type { InternalIds } from './sql';
 import { TargetRepository } from './target-repository';
+import { TemplateRepository } from './template-repository';
 
 /**
  * Facade over the storage modules. Callers can use the domain repositories directly; this
@@ -22,6 +23,7 @@ import { TargetRepository } from './target-repository';
 export class Repositories {
   readonly settings: SettingsRepository;
   readonly targets: TargetRepository;
+  readonly templates: TemplateRepository;
   readonly sessions: SessionRepository;
   readonly history: HistoryRepository;
   readonly maintenance: MaintenanceRepository;
@@ -33,6 +35,8 @@ export class Repositories {
   ) {
     this.settings = new SettingsRepository(db);
     this.targets = new TargetRepository(db, onWarning);
+    this.templates = new TemplateRepository(db, onWarning);
+    this.targets.setTemplateResolver((id) => this.templates.get(id));
     this.sessions = new SessionRepository(db);
     this.history = new HistoryRepository(db, this.targets);
     this.maintenance = new MaintenanceRepository(db, databasePath, this.targets);
@@ -70,18 +74,43 @@ export class Repositories {
     return this.targets.listHistoricalDefinitions();
   }
 
-  /** Import mode "replace": upsert every target in the file, soft-delete active ones absent from it. */
-  replaceActiveConfiguration(settings: AppSettings, targets: TargetConfig[]): void {
+  listTemplates(): CheckTemplate[] {
+    return this.templates.list();
+  }
+  /** Saves a template and regenerates inherited checks on every linked target. Returns that count. */
+  saveTemplate(template: CheckTemplate): number {
+    return this.db.transaction(() => {
+      this.templates.save(template);
+      return this.targets.rematerialize(template.id);
+    })();
+  }
+  deleteTemplate(templateId: string): void {
+    this.templates.delete(templateId);
+  }
+
+  /**
+   * Import mode "replace": upsert every template and target in the file, soft-delete active
+   * targets absent from it. Templates are never deleted by an import.
+   */
+  replaceActiveConfiguration(
+    settings: AppSettings | undefined,
+    targets: TargetConfig[],
+    templates: CheckTemplate[] = [],
+  ): void {
     this.db.transaction(() => {
-      this.settings.save(settings);
+      if (settings) this.settings.save(settings);
+      for (const template of templates) this.templates.save(template);
       for (const target of targets) this.targets.save(target, true);
       this.targets.softDeleteAbsent(targets.map((target) => target.id));
     })();
   }
 
-  /** Import mode "add only": create targets whose IDs have never existed locally. */
-  addOnlyTargets(targets: TargetConfig[]): void {
+  /** Import mode "add only": create templates and targets whose IDs have never existed locally. */
+  addOnlyTargets(targets: TargetConfig[], templates: CheckTemplate[] = []): void {
     this.db.transaction(() => {
+      const knownTemplates = this.templates.knownIds();
+      for (const template of templates)
+        if (!knownTemplates.has(template.id)) this.templates.save(template);
       const known = this.targets.knownIds();
       for (const target of targets) if (!known.has(target.id)) this.targets.save(target, true);
     })();

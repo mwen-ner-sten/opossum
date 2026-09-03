@@ -63,6 +63,54 @@ auth:
 
 Define those variables in the environment that launches OPOSSUM. Resolved values are never exported, written to status history, sent to the renderer, or intentionally logged. Authorization, cookie, and proxy-authorization headers are rejected from static header configuration.
 
+## Templates: one definition, many sites
+
+A template is a named set of checks whose text fields may contain placeholders. Link a target to a template and it inherits every check with the placeholders filled in for that target, so monitoring EBO on a hundred sites means one template plus a hundred hosts, not a hundred hand-built check lists. Edit the template later and every linked target is regenerated in place; check identity and history are preserved.
+
+| Placeholder                       | Value                                                        |
+| --------------------------------- | ------------------------------------------------------------ |
+| `{{host}}`                        | The target's hostname or IP                                  |
+| `{{name}}`, `{{id}}`, `{{group}}` | The target's display name, ID, and group                     |
+| `{{vars.<key>}}`                  | A per-target variable, for sites that differ in port or path |
+
+Create templates under **Configuration → Templates**. In the target editor, pick a linked template, fill any variables it needs, and add target-specific checks alongside the inherited ones. An own check with the same ID as an inherited check overrides it. Inherited checks show as _From template_ and are read-only on the target.
+
+In YAML a template is declared once and referenced by ID:
+
+```yaml
+templates:
+  - id: ebo-site
+    name: EBO site server
+    checks:
+      - { id: host-ping, name: Host ping, type: ping }
+      - {
+          id: ebo-web,
+          name: EBO WebStation,
+          type: http,
+          url: 'https://{{host}}:{{vars.web_port}}/',
+          verify_tls: false,
+        }
+targets:
+  - id: den-bms-01
+    name: Denver BMS Server 01
+    host: 10.20.31.40
+    template: ebo-site
+    vars: { web_port: '443' }
+    checks: []
+```
+
+Exports contain only own checks plus the templates the exported targets reference.
+
+## Import builder: spreadsheets and other lists
+
+**Import** accepts more than OPOSSUM YAML. Choose a CSV, TSV, XLSX, JSON, XML, or plain-text file, or use **Configuration → Paste list** to paste rows copied from a spreadsheet, and the import builder opens:
+
+1. **Map columns.** Headings such as _IP Address_, _Site Name_, _Region_, or _Template_ are detected automatically; adjust the mapping if needed. Only the host column is required. Missing names fall back to the host and IDs are generated from the name (with an optional prefix).
+2. **Choose a template** for every row, or map a column that names one per row. Unmapped columns can be exposed to the template as `{{vars.<name>}}`, for example a _Web Port_ column becomes `{{vars.web_port}}`.
+3. **Review** the generated targets, the rows that were skipped and why, and how the result merges with what is already stored. Then **Add** new targets only or **Replace** the active set.
+
+JSON, YAML, and XML files may wrap their record list (`sites:`, `targets:`, a repeated element); nested fields are flattened to dotted column names. A file that already is a full OPOSSUM configuration (it has `format_version`) skips the builder and uses the normal preview below. Files are limited to 25 MiB and 5,000 rows.
+
 ## YAML import and export
 
 See [`opossum.example.yaml`](opossum.example.yaml) for the complete portable format.

@@ -418,3 +418,225 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* --- Templates --- */
+.heading-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.section-heading h2 svg,
+.section-heading h3 svg {
+  vertical-align: -2px;
+  margin-right: 4px;
+  color: var(--accent);
+}
+.template-section {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+}
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+.template-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+  box-shadow: var(--shadow-sm);
+}
+.template-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.template-card-head strong {
+  font-size: var(--text-md);
+}
+.template-card-head code {
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+.template-card > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.template-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.template-checks > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  padding: 3px 8px 3px 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.template-card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.template-card-foot small {
+  color: var(--faint);
+  font-family: var(--font-mono);
+}
+.template-card-foot .mini-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.template-empty p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  max-width: 60ch;
+}
+.config-badges {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.template-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.config-checks > div.inherited {
+  background: color-mix(in srgb, var(--accent-soft) 40%, var(--surface-2));
+}
+
+/* --- Import builder and editor extras --- */
+.placeholder-help {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--text-xs);
+}
+.placeholder-help code {
+  margin-right: 6px;
+  color: var(--text);
+}
+.placeholder-help small {
+  color: var(--muted);
+}
+.inherited-list {
+  margin-top: 12px;
+  display: grid;
+  gap: 4px;
+}
+.inherited-check {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 4px 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+.inherited-check code {
+  grid-column: 2;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+.inherited-check small {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  color: var(--accent);
+  font-weight: 600;
+}
+.inherited-check.overridden {
+  opacity: 0.55;
+}
+.footer-note {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  align-self: center;
+}
+.var-rows {
+  display: grid;
+  gap: 6px;
+}
+.var-row {
+  display: grid;
+  grid-template-columns: 200px auto 1fr;
+  gap: 10px;
+  align-items: center;
+  font-size: var(--text-sm);
+}
+.var-row > span {
+  color: var(--faint);
+}
+.unmapped {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 10px;
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+.scroll-x {
+  overflow-x: auto;
+}
+.data-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--text-xs);
+}
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.data-table th {
+  color: var(--faint);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  background: var(--surface-2);
+  position: sticky;
+  top: 0;
+}
+.data-table th.mapped {
+  color: var(--accent);
+}
+.table-note {
+  margin: 8px 0 0;
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+.paste-area {
+  width: 100%;
+  min-height: 180px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
