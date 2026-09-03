@@ -640,33 +640,62 @@ export class Repositories {
     const id = randomUUID();
     let sessionsRemoved = 0;
     let intervalsRemoved = 0;
-    this.db.transaction(() => {
+    let intervalsTrimmed = 0;
+    let error: string | undefined;
+    try {
       if (options.before) {
-        this.db
-          .prepare(
-            `UPDATE status_intervals SET started_at=? WHERE ${where} AND started_at < ? AND COALESCE(ended_at,last_observation_at) >= ?`,
-          )
-          .run(options.before, ...parameters, options.before, options.before);
+        while (true) {
+          const crossing = this.db
+            .prepare(
+              `SELECT id FROM status_intervals WHERE ${where} AND started_at < ?
+               AND COALESCE(ended_at,last_observation_at) >= ? LIMIT 1000`,
+            )
+            .all(...parameters, options.before, options.before) as Array<{ id: string }>;
+          if (crossing.length === 0) break;
+          const placeholders = crossing.map(() => '?').join(',');
+          this.db.transaction(() => {
+            const updated = this.db
+              .prepare(`UPDATE status_intervals SET started_at=? WHERE id IN (${placeholders})`)
+              .run(options.before, ...crossing.map((row) => row.id));
+            intervalsTrimmed += updated.changes;
+          })();
+        }
       }
-      const deleted = this.db
-        .prepare(
-          `DELETE FROM status_intervals WHERE ${where} ${options.before ? 'AND COALESCE(ended_at,last_observation_at) < ?' : ''}`,
-        )
-        .run(...parameters, ...(options.before ? [options.before] : []));
-      intervalsRemoved = deleted.changes;
-      const removed = this.db
-        .prepare(
-          `DELETE FROM sessions WHERE ended_at IS NOT NULL AND id NOT IN (SELECT DISTINCT session_id FROM status_intervals)`,
-        )
-        .run();
-      sessionsRemoved = removed.changes;
-      if (options.clearLastKnown) this.db.prepare('DELETE FROM check_last_state').run();
-    })();
+      while (true) {
+        const rows = this.db
+          .prepare(
+            `SELECT id FROM status_intervals WHERE ${where}
+             ${options.before ? 'AND COALESCE(ended_at,last_observation_at) < ?' : ''} LIMIT 1000`,
+          )
+          .all(...parameters, ...(options.before ? [options.before] : [])) as Array<{
+          id: string;
+        }>;
+        if (rows.length === 0) break;
+        const placeholders = rows.map(() => '?').join(',');
+        this.db.transaction(() => {
+          const deleted = this.db
+            .prepare(`DELETE FROM status_intervals WHERE id IN (${placeholders})`)
+            .run(...rows.map((row) => row.id));
+          intervalsRemoved += deleted.changes;
+        })();
+      }
+      this.db.transaction(() => {
+        const removed = this.db
+          .prepare(
+            `DELETE FROM sessions WHERE ended_at IS NOT NULL AND id NOT IN (SELECT DISTINCT session_id FROM status_intervals)`,
+          )
+          .run();
+        sessionsRemoved = removed.changes;
+        if (options.clearLastKnown) this.db.prepare('DELETE FROM check_last_state').run();
+      })();
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : 'History purge failed';
+    }
     const endedAt = now();
     this.db
       .prepare(
-        `INSERT INTO maintenance_runs(id,started_at,ended_at,reason,cutoff_at,intervals_removed,sessions_removed)
-      VALUES(?,?,?,?,?,?,?)`,
+        `INSERT INTO maintenance_runs(id,started_at,ended_at,reason,cutoff_at,intervals_removed,sessions_removed,error,details_json)
+      VALUES(?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         id,
@@ -676,6 +705,8 @@ export class Repositories {
         options.before ?? null,
         intervalsRemoved,
         sessionsRemoved,
+        error ?? null,
+        JSON.stringify({ intervalsTrimmed }),
       );
     return {
       id,
@@ -685,7 +716,15 @@ export class Repositories {
       ...(options.before ? { cutoffAt: options.before } : {}),
       intervalsRemoved,
       sessionsRemoved,
+      ...(error ? { error } : {}),
     };
+  }
+
+  getOldestClosedSessionId(): string | undefined {
+    const row = this.db
+      .prepare('SELECT id FROM sessions WHERE ended_at IS NOT NULL ORDER BY started_at LIMIT 1')
+      .get() as { id: string } | undefined;
+    return row?.id;
   }
 
   private purgeWhere(options: PurgeOptions): { where: string; parameters: unknown[] } {

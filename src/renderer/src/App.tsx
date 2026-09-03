@@ -30,6 +30,23 @@ function isImportPreview(value: unknown): value is ImportPreview {
   return Boolean(value && typeof value === 'object' && 'newTargets' in value);
 }
 
+function displayError(error: unknown): string {
+  if (!(error instanceof Error)) return 'An unexpected error occurred.';
+  const details = (error as Error & { details?: unknown }).details;
+  if (!Array.isArray(details)) return error.message;
+  const issues = details
+    .slice(0, 8)
+    .map((item) => {
+      if (!item || typeof item !== 'object') return undefined;
+      const issue = item as { path?: unknown; message?: unknown };
+      const path = typeof issue.path === 'string' && issue.path ? issue.path : 'configuration';
+      const message = typeof issue.message === 'string' ? issue.message : 'invalid value';
+      return `${path}: ${message}`;
+    })
+    .filter(Boolean);
+  return issues.length ? `${error.message}\n${issues.join('\n')}` : error.message;
+}
+
 export function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>();
   const [view, setView] = useState<View>('monitor');
@@ -100,7 +117,7 @@ export function App() {
       const result = await window.opossum.importConfiguration({ previewOnly: true });
       if (isImportPreview(result)) setImportPreview(result);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Configuration could not be imported.');
+      setError(displayError(caught));
     } finally {
       setBusy('');
     }
@@ -115,9 +132,7 @@ export function App() {
       });
       if (isImportPreview(result)) setImportPreview(result);
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : 'Adjacent configuration could not be opened.',
-      );
+      setError(displayError(caught));
     }
   };
   const confirmImport = async (mode: 'replace' | 'add-only'): Promise<void> => {
@@ -129,7 +144,7 @@ export function App() {
       setNotice('Configuration imported');
       await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Configuration could not be imported.');
+      setError(displayError(caught));
     } finally {
       setBusy('');
     }

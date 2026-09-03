@@ -38,13 +38,11 @@ export class MaintenanceEngine {
       const target = maximumBytes * 0.85;
       let batches = 0;
       while (stats.totalBytes > target && batches < 20) {
-        const oldest = this.repositories
-          .listSessions(1_000)
-          .filter((session) => session.endedAt)
-          .at(-1);
+        const oldest = this.repositories.getOldestClosedSessionId();
         if (!oldest) break;
-        latest = this.repositories.purgeHistory({ sessionIds: [oldest.id] }, 'automatic-size');
+        latest = this.repositories.purgeHistory({ sessionIds: [oldest] }, 'automatic-size');
         this.onComplete(latest);
+        this.repositories.optimize(false);
         stats = this.repositories.getDatabaseStats();
         batches += 1;
       }

@@ -1541,6 +1541,7 @@ textarea {
 .toast-error {
   background: #49262a;
   color: #ffe8e9;
+  white-space: pre-line;
 }
 .toast button {
   border: 0;
