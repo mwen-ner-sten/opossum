@@ -1,14 +1,23 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  verify:
-    runs-on: windows-latest
-    timeout-minutes: 30
+  checks:
+    name: Format, lint, typecheck, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,15 +29,44 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:coverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore
+
+  build:
+    name: Build, end-to-end, portable exe (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
       - run: npm run build
       - name: End-to-end (Electron + Playwright)
         run: npx playwright test
+      - name: Compute build number (commit count)
+        id: buildnum
+        shell: bash
+        run: |
+          count=$(git rev-list --count HEAD)
+          sha=$(git rev-parse --short HEAD)
+          version=$(node -p "require('./package.json').version")
+          echo "BUILD_NUMBER=$count" >> "$GITHUB_ENV"
+          echo "label=$version.$count-$sha" >> "$GITHUB_OUTPUT"
       - name: Portable build
         run: npx electron-builder --win portable --x64 --publish never
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: opossum-portable
+          name: opossum-portable-${{ steps.buildnum.outputs.label }}
           path: |
             release/*.exe
             test-results/
