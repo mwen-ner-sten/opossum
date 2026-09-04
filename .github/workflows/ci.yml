@@ -22,7 +22,7 @@ jobs:
       # Static checks never launch Electron, so skip the binary download entirely.
       ELECTRON_SKIP_BINARY_DOWNLOAD: 1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -43,7 +43,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: actions/setup-node@v4
