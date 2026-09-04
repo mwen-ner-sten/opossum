@@ -250,8 +250,8 @@ export function TargetEditor({
               <div className="warning-box">
                 Set {inheritedPreview.missing.map((name) => `"${name}"`).join(', ')} above to
                 activate the inherited checks that read{' '}
-                {inheritedPreview.missing.map((name) => `{{vars.${name}}}`).join(', ')}. The
-                target can be saved without them.
+                {inheritedPreview.missing.map((name) => `{{vars.${name}}}`).join(', ')}. The target
+                can be saved without them.
               </div>
             )}
             {inheritedPreview.error ? (

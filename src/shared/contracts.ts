@@ -1,12 +1,7 @@
 import { z } from 'zod';
 import type { CapacityAssessment } from '@core/capacity';
 import type { AppSettings, CheckConfig, CheckTemplate, TargetConfig } from '@core/config';
-import type {
-  ImportMapping,
-  ImportRow,
-  ImportRowIssue,
-  PartialTarget,
-} from '@core/import-mapping';
+import type { ImportMapping, ImportRow, ImportRowIssue, PartialTarget } from '@core/import-mapping';
 import type { LiveCheckState, SessionSummary, TimelineResult } from '@core/models';
 
 export type ImportMode = 'replace' | 'add-only';

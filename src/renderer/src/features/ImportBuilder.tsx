@@ -307,7 +307,9 @@ export function ImportBuilder({
                       </select>
                       <input
                         aria-label={`Default value for variable ${name}`}
-                        placeholder={mapping.vars[name] ? 'Fallback for blank cells' : 'Value for every row'}
+                        placeholder={
+                          mapping.vars[name] ? 'Fallback for blank cells' : 'Value for every row'
+                        }
                         value={mapping.varDefaults?.[name] ?? ''}
                         onChange={(event) =>
                           setMapping({
@@ -521,8 +523,8 @@ export function ImportBuilder({
             </div>
             {preview.partial.length > 0 && (
               <div className="info-box">
-                {preview.partial.length} target{preview.partial.length === 1 ? '' : 's'} will
-                import partially: inherited checks that need{' '}
+                {preview.partial.length} target{preview.partial.length === 1 ? '' : 's'} will import
+                partially: inherited checks that need{' '}
                 {[...new Set(preview.partial.flatMap((item) => item.missing))]
                   .map((name) => `"${name}"`)
                   .join(', ')}{' '}
