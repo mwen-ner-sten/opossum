@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import type { AppSettings, CheckTemplate, PortableConfiguration, TargetConfig } from '@core/config';
 import { assessCapacity } from '@core/capacity';
 import { autoDetectMapping, buildTargetsFromRows } from '@core/import-mapping';
-import { resolveChecks, validateTemplate } from '@core/templates';
+import { resolveChecksPartial, validateTemplate } from '@core/templates';
 import { Scheduler } from '@core/scheduler';
 import { addOfflineGaps, aggregateTargetTimeline, observedAvailability } from '@core/timeline';
 import type { LiveCheckState, SessionSummary, TimelineResult } from '@core/models';
@@ -77,7 +77,7 @@ export interface ApplicationOptions {
 /** Expanded checks for a capacity projection; falls back to own checks if expansion fails. */
 function projectedChecks(target: TargetConfig, template: CheckTemplate | undefined) {
   try {
-    return resolveChecks(target, template);
+    return resolveChecksPartial(target, template).checks;
   } catch {
     return target.checks;
   }
@@ -288,7 +288,11 @@ export class ApplicationService {
   async previewTableImport(options: TableImportOptions): Promise<TableImportPreview> {
     const source = await this.loadTable(options);
     const templates = this.repositories.listTemplates();
-    const { targets, issues } = buildTargetsFromRows(source.rows, options.mapping, templates);
+    const { targets, issues, partial } = buildTargetsFromRows(
+      source.rows,
+      options.mapping,
+      templates,
+    );
     const settings = this.repositories.getSettings();
     const existing = this.repositories.listTargets();
     const incomingIds = new Set(targets.map((target) => target.id));
@@ -316,7 +320,7 @@ export class ApplicationService {
       this.repositories.listTargets(true),
       templates,
     );
-    return { targets, issues, preview, projectedCapacity };
+    return { targets, issues, partial, preview, projectedCapacity };
   }
 
   async applyTableImport(options: TableImportOptions): Promise<{ imported: number }> {

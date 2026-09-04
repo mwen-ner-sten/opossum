@@ -1,5 +1,5 @@
 import { targetSchema, type CheckTemplate, type TargetConfig } from './config';
-import { PlaceholderError, resolveChecks, templatePlaceholders } from './templates';
+import { resolveChecksPartial, templatePlaceholders } from './templates';
 
 /** A row of tabular input after every cell has been reduced to a trimmed string. */
 export type ImportRow = Record<string, string>;
@@ -26,6 +26,15 @@ export interface ImportMapping {
   };
   /** Template variable name → source column. */
   vars: Record<string, string>;
+  /** Template variable name → value used when no column is mapped or the cell is blank. */
+  varDefaults?: Record<string, string> | undefined;
+}
+
+export interface PartialTarget {
+  row: number;
+  targetId: string;
+  /** Template variables still undefined; the inherited checks that need them were left out. */
+  missing: string[];
 }
 
 export interface ImportRowIssue {
@@ -36,6 +45,8 @@ export interface ImportRowIssue {
 export interface BuiltTargets {
   targets: TargetConfig[];
   issues: ImportRowIssue[];
+  /** Targets that import with some inherited checks missing until their variables are set. */
+  partial: PartialTarget[];
 }
 
 const FIELD_PATTERNS: Array<[MappedField, RegExp]> = [
@@ -106,6 +117,7 @@ export function buildTargetsFromRows(
   const templateIds = new Set(templateById.keys());
   const targets: TargetConfig[] = [];
   const issues: ImportRowIssue[] = [];
+  const partial: PartialTarget[] = [];
   const seenIds = new Set<string>();
   rows.forEach((row, index) => {
     const rowNumber = index + 1;
@@ -145,6 +157,8 @@ export function buildTargetsFromRows(
       const value = cell(row, column);
       if (value !== '') vars[key] = value;
     }
+    for (const [key, value] of Object.entries(mapping.varDefaults ?? {}))
+      if (vars[key] === undefined && value.trim() !== '') vars[key] = value.trim();
     const parsed = targetSchema.safeParse({
       id,
       name,
@@ -164,25 +178,21 @@ export function buildTargetsFromRows(
       });
       return;
     }
-    // Expand the template now so a missing variable or a bad URL is a row issue, not a crash.
+    // Expand the template now: a bad URL is a row issue, a missing variable makes the row partial.
     try {
-      resolveChecks(parsed.data, templateById.get(template));
+      const { missing } = resolveChecksPartial(parsed.data, templateById.get(template));
+      if (missing.length) partial.push({ row: rowNumber, targetId: id, missing });
     } catch (error) {
       issues.push({
         row: rowNumber,
-        message:
-          error instanceof PlaceholderError && error.placeholder.startsWith('vars.')
-            ? `Template "${template}" needs variable "${error.placeholder.slice(5)}"; map a column to it under Template variables`
-            : error instanceof Error
-              ? error.message
-              : 'Template could not be applied',
+        message: error instanceof Error ? error.message : 'Template could not be applied',
       });
       return;
     }
     seenIds.add(id);
     targets.push(parsed.data);
   });
-  return { targets, issues };
+  return { targets, issues, partial };
 }
 
 /** Variable names a template reads via `{{vars.<name>}}`, for the mapping UI. */

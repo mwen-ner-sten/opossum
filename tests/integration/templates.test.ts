@@ -115,7 +115,13 @@ describe('templates in storage', () => {
     expect(repositories.listTargets()[0]?.checks[0]).toMatchObject({
       url: 'https://10.0.0.1:9443/',
     });
-    expect(() => repositories.saveTarget(site('b', '10.0.0.2'))).toThrow(/vars\.port/);
+    // Without the variable the target still saves; the check that needs it is simply absent.
+    repositories.saveTarget(site('b', '10.0.0.2'));
+    expect(repositories.listTargets().find((target) => target.id === 'b')?.checks).toEqual([]);
+    repositories.saveTarget(site('b', '10.0.0.2', { vars: { port: '80' } }));
+    expect(repositories.listTargets().find((target) => target.id === 'b')?.checks[0]).toMatchObject(
+      { url: 'https://10.0.0.2:80/' },
+    );
     expect(() => repositories.saveTarget(site('c', '10.0.0.3', { template: 'nope' }))).toThrow(
       /not found/,
     );

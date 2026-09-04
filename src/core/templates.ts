@@ -168,6 +168,61 @@ export function resolveChecks(
   return effective;
 }
 
+export interface PartialResolution {
+  checks: CheckConfig[];
+  /** Variable names the template reads that this target does not define. */
+  missing: string[];
+}
+
+/** Variable names a template reads via `{{vars.<name>}}` that the target has not defined. */
+export function missingTemplateVariables(
+  target: Pick<TargetConfig, 'vars'>,
+  template: CheckTemplate | undefined,
+): string[] {
+  if (!template) return [];
+  return templatePlaceholders(template)
+    .filter((name) => name.startsWith('vars.'))
+    .map((name) => name.slice('vars.'.length))
+    .filter((name) => target.vars?.[name] === undefined);
+}
+
+/**
+ * Like {@link resolveChecks}, but inherited checks that cannot expand because a variable is
+ * missing are left out instead of failing, so a partially configured target can be saved and
+ * finished later. Other expansion errors still throw.
+ */
+export function resolveChecksPartial(
+  target: TargetConfig,
+  template: CheckTemplate | undefined,
+): PartialResolution {
+  const own = ownChecks(target);
+  if (!template) return { checks: own, missing: [] };
+  const taken = new Set(own.map((check) => check.id));
+  const inherited: CheckConfig[] = [];
+  const missing = new Set<string>();
+  for (const check of template.checks) {
+    if (taken.has(check.id)) continue;
+    try {
+      inherited.push(...expandTemplate({ ...template, checks: [check] }, target));
+    } catch (error) {
+      if (error instanceof PlaceholderError && error.placeholder.startsWith('vars.'))
+        missing.add(error.placeholder.slice('vars.'.length));
+      else throw error;
+    }
+  }
+  const effective = [...own, ...inherited];
+  // Dependencies on a check that could not expand are dropped rather than rejected.
+  const present = new Set(effective.map((check) => check.id));
+  const checks = effective.map((check) =>
+    check.depends_on?.some((id) => !present.has(id))
+      ? { ...check, depends_on: check.depends_on.filter((id) => present.has(id)) }
+      : check,
+  );
+  const issue = validateDependencies(checks)[0];
+  if (issue) throw new Error(`Check "${issue.checkId}": ${issue.message}`);
+  return { checks, missing: [...missing] };
+}
+
 export const templateContextSchema = z.object({
   id: z.string(),
   name: z.string(),

@@ -10,6 +10,7 @@ import {
   Upload,
 } from 'lucide-react';
 import type { CheckTemplate, TargetConfig } from '@core/config';
+import { missingTemplateVariables } from '@core/templates';
 
 export function ConfigurationView({
   targets,
@@ -40,6 +41,11 @@ export function ConfigurationView({
 }) {
   const linkedCount = (template: CheckTemplate): number =>
     targets.filter((target) => target.template === template.id).length;
+  const missingFor = (target: TargetConfig): string[] =>
+    missingTemplateVariables(
+      target,
+      templates.find((template) => template.id === target.template),
+    );
   return (
     <div className="workspace padded">
       <div className="page-heading">
@@ -151,6 +157,15 @@ export function ConfigurationView({
                 </div>
               </div>
               <div className="config-badges">
+                {missingFor(target).length > 0 && (
+                  <button
+                    className="type-pill needs-pill"
+                    title="Inherited checks that read these variables are inactive until you set them"
+                    onClick={() => onEdit(target)}
+                  >
+                    NEEDS {missingFor(target).join(', ')}
+                  </button>
+                )}
                 {target.template && (
                   <span className="type-pill template-pill">
                     <Layers size={10} /> {target.template}

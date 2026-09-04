@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Layers } from 'lucide-react';
 import { targetSchema, type CheckTemplate, type TargetConfig } from '@core/config';
-import { expandTemplate, ownChecks, templatePlaceholders } from '@core/templates';
+import { ownChecks, resolveChecksPartial, templatePlaceholders } from '@core/templates';
 import { Modal } from '../components/Modal';
 import { CheckEditorList } from './editor/CheckEditorList';
 import { newPingCheck } from './editor/check-helpers';
@@ -76,19 +76,25 @@ export function TargetEditor({
     [template],
   );
   const inheritedPreview = useMemo(() => {
-    if (!template) return { checks: [], error: '' };
+    if (!template) return { checks: [], missing: [] as string[], error: '' };
     try {
-      return {
-        checks: expandTemplate(template, {
+      const { checks, missing } = resolveChecksPartial(
+        {
           ...draft,
+          checks: [],
           host: draft.host || 'host.example',
           name: draft.name || 'Target',
           id: draft.id || 'target',
-        }),
-        error: '',
-      };
+        },
+        template,
+      );
+      return { checks, missing, error: '' };
     } catch (error) {
-      return { checks: [], error: error instanceof Error ? error.message : 'Cannot expand' };
+      return {
+        checks: [],
+        missing: [] as string[],
+        error: error instanceof Error ? error.message : 'Cannot expand',
+      };
     }
   }, [template, draft]);
   const ownIds = new Set(draft.checks.map((check) => check.id));
@@ -240,6 +246,14 @@ export function TargetEditor({
         </div>
         {template && (
           <div className="inherited-list" aria-label="Inherited checks">
+            {inheritedPreview.missing.length > 0 && (
+              <div className="warning-box">
+                Set {inheritedPreview.missing.map((name) => `"${name}"`).join(', ')} above to
+                activate the inherited checks that read{' '}
+                {inheritedPreview.missing.map((name) => `{{vars.${name}}}`).join(', ')}. The
+                target can be saved without them.
+              </div>
+            )}
             {inheritedPreview.error ? (
               <div className="error-box">{inheritedPreview.error}</div>
             ) : (

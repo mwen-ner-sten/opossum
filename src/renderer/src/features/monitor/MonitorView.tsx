@@ -18,6 +18,7 @@ import {
   type TimelineResult,
 } from '@core/models';
 import type { AppSnapshot, TimelineRange } from '@shared/contracts';
+import { missingTemplateVariables } from '@core/templates';
 import { StatusBadge } from '../../components/StatusBadge';
 import { CheckRow } from './CheckRow';
 import { DetailPanel, type SelectedCheck } from './DetailPanel';
@@ -268,6 +269,22 @@ export function MonitorView({
                             <strong>{target.name}</strong>
                             <code>{target.host}</code>
                             <StatusBadge status={targetStatus} subtle />
+                            {missingTemplateVariables(
+                              target,
+                              snapshot.templates.find((item) => item.id === target.template),
+                            ).length > 0 && (
+                              <button
+                                className="type-pill needs-pill"
+                                title="Some inherited checks are inactive until template variables are set"
+                                onClick={() => onEdit(target)}
+                              >
+                                NEEDS{' '}
+                                {missingTemplateVariables(
+                                  target,
+                                  snapshot.templates.find((item) => item.id === target.template),
+                                ).join(', ')}
+                              </button>
+                            )}
                           </div>
                           <div className="row-actions">
                             <button

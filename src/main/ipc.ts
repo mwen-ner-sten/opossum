@@ -35,6 +35,7 @@ const importMappingSchema = z.object({
     })
     .strict(),
   vars: z.record(z.string().max(40), columnName),
+  varDefaults: z.record(z.string().max(40), z.string().max(500)).optional(),
 });
 const tableImportSchema = z.object({
   filePath: z.string().optional(),

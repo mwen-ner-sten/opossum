@@ -6,7 +6,7 @@ import {
   type CheckTemplate,
   type TargetConfig,
 } from '@core/config';
-import { ownChecks, resolveChecks } from '@core/templates';
+import { ownChecks, resolveChecksPartial } from '@core/templates';
 import type { HistoricalDefinition } from '@shared/contracts';
 import { OpossumError } from '@shared/errors';
 import { now, placeholders, type Db, type InternalIds } from './sql';
@@ -111,9 +111,15 @@ export class TargetRepository {
     if (target.template && !template)
       throw new OpossumError('NOT_FOUND', `Template "${target.template}" was not found.`);
     const own = ownChecks(target);
-    const effective = resolveChecks(target, template);
-    if (effective.length === 0)
+    // Inherited checks whose variables are still undefined are simply not materialized yet;
+    // the UI flags the target as needing those variables.
+    const { checks: effective, missing } = resolveChecksPartial(target, template);
+    if (effective.length === 0 && missing.length === 0)
       throw new OpossumError('VALIDATION', 'A target needs at least one check.');
+    if (missing.length)
+      this.onWarning(
+        `Target ${target.id} is missing template variable${missing.length === 1 ? '' : 's'} ${missing.join(', ')}; some inherited checks are not active yet.`,
+      );
     this.db.transaction(() => {
       const existing = this.db
         .prepare('SELECT internal_id FROM targets WHERE config_id = ?')
@@ -164,9 +170,9 @@ export class TargetRepository {
       const scope = replaceChecks ? '' : 'AND template_id IS NOT NULL';
       this.db
         .prepare(
-          `UPDATE checks SET deleted_at=?, updated_at=? WHERE target_internal_id=? AND deleted_at IS NULL ${scope} AND config_id NOT IN (${placeholders(keep.length)})`,
+          `UPDATE checks SET deleted_at=?, updated_at=? WHERE target_internal_id=? AND deleted_at IS NULL ${scope} AND config_id NOT IN (${placeholders(keep.length || 1)})`,
         )
-        .run(timestamp, timestamp, internalId, ...keep);
+        .run(timestamp, timestamp, internalId, ...(keep.length ? keep : ['']));
     })();
   }
 

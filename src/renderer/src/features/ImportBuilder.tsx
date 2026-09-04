@@ -126,7 +126,9 @@ export function ImportBuilder({
   const unmapped = source.columns.filter((column) => !mappedColumns.has(column));
   const defaultTemplate = templates.find((item) => item.id === mapping.defaults.template);
   const neededVars = templateVariables(defaultTemplate);
-  const missingVars = neededVars.filter((name) => !mapping.vars[name]);
+  const missingVars = neededVars.filter(
+    (name) => !mapping.vars[name] && !(mapping.varDefaults?.[name] ?? '').trim(),
+  );
   const canReview =
     Boolean(mapping.columns.host) &&
     (Boolean(mapping.columns.template) || Boolean(mapping.defaults.template));
@@ -283,20 +285,42 @@ export function ImportBuilder({
                 </div>
               )}
               {neededVars.length > 0 && (
-                <div className={`inline-note ${missingVars.length ? 'warning-box' : 'info-box'}`}>
-                  Template <strong>{defaultTemplate?.name}</strong> reads{' '}
+                <div className={`var-needs ${missingVars.length ? 'warning-box' : 'info-box'}`}>
+                  <span>
+                    Template <strong>{defaultTemplate?.name}</strong> reads these variables. Map a
+                    column, or type a value to use for every row that has none.
+                  </span>
                   {neededVars.map((name) => (
-                    <code key={name} className={missingVars.includes(name) ? 'missing' : ''}>
-                      {`{{vars.${name}}}`}
-                    </code>
+                    <div key={name} className="var-need-row">
+                      <code>{`{{vars.${name}}}`}</code>
+                      <select
+                        aria-label={`Column for variable ${name}`}
+                        value={mapping.vars[name] ?? ''}
+                        onChange={(event) => setVar(name, event.target.value)}
+                      >
+                        <option value="">No column</option>
+                        {source.columns.map((item) => (
+                          <option key={item} value={item}>
+                            {item}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        aria-label={`Default value for variable ${name}`}
+                        placeholder={mapping.vars[name] ? 'Fallback for blank cells' : 'Value for every row'}
+                        value={mapping.varDefaults?.[name] ?? ''}
+                        onChange={(event) =>
+                          setMapping({
+                            ...mapping,
+                            varDefaults: { ...mapping.varDefaults, [name]: event.target.value },
+                          })
+                        }
+                      />
+                      <small className={missingVars.includes(name) ? 'missing' : 'ok'}>
+                        {missingVars.includes(name) ? 'Rows will import partially' : 'Covered'}
+                      </small>
+                    </div>
                   ))}
-                  {missingVars.length > 0 && (
-                    <>
-                      {' '}
-                      — map a column to {missingVars.map((name) => `"${name}"`).join(', ')} under
-                      Template variables, or every row will be skipped.
-                    </>
-                  )}
                 </div>
               )}
             </div>
@@ -398,8 +422,12 @@ export function ImportBuilder({
                       const issue = mapped.issues.find((item) => item.row === index + 1);
                       const skipped = mapped.issues.filter((item) => item.row <= index).length;
                       const target = issue ? undefined : mapped.targets[index - skipped];
+                      const partialRow = mapped.partial.find((item) => item.row === index + 1);
                       return (
-                        <tr key={index} className={issue ? 'row-issue' : ''}>
+                        <tr
+                          key={index}
+                          className={issue ? 'row-issue' : partialRow ? 'row-partial' : ''}
+                        >
                           <td className="mono">{index + 1}</td>
                           {issue ? (
                             <td colSpan={6} className="issue-cell">
@@ -422,6 +450,11 @@ export function ImportBuilder({
                                     .map(([key, value]) => `${key}=${value}`)
                                     .join(' ')}
                                 </code>
+                                {partialRow && (
+                                  <span className="partial-tag">
+                                    needs {partialRow.missing.join(', ')}
+                                  </span>
+                                )}
                               </td>
                             </>
                           )}
@@ -486,6 +519,16 @@ export function ImportBuilder({
                 <span>rows skipped</span>
               </div>
             </div>
+            {preview.partial.length > 0 && (
+              <div className="info-box">
+                {preview.partial.length} target{preview.partial.length === 1 ? '' : 's'} will
+                import partially: inherited checks that need{' '}
+                {[...new Set(preview.partial.flatMap((item) => item.missing))]
+                  .map((name) => `"${name}"`)
+                  .join(', ')}{' '}
+                stay inactive until you set the variable on each target (Configuration → Edit).
+              </div>
+            )}
             {preview.issues.length > 0 && (
               <div className="warning-box">
                 {preview.issues.slice(0, 12).map((issue) => (

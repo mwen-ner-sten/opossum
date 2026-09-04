@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import type { CapacityAssessment } from '@core/capacity';
 import type { AppSettings, CheckConfig, CheckTemplate, TargetConfig } from '@core/config';
-import type { ImportMapping, ImportRow, ImportRowIssue } from '@core/import-mapping';
+import type {
+  ImportMapping,
+  ImportRow,
+  ImportRowIssue,
+  PartialTarget,
+} from '@core/import-mapping';
 import type { LiveCheckState, SessionSummary, TimelineResult } from '@core/models';
 
 export type ImportMode = 'replace' | 'add-only';
@@ -50,6 +55,8 @@ export interface TableImportOptions {
 export interface TableImportPreview {
   targets: TargetConfig[];
   issues: ImportRowIssue[];
+  /** Rows that import with inherited checks left out until their template variables are set. */
+  partial: PartialTarget[];
   preview: ImportPreview;
   /** Capacity assessment for the configuration as it would look after adding these targets. */
   projectedCapacity: CapacityAssessment;

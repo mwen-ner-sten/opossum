@@ -97,18 +97,32 @@ describe('template variables during import', () => {
       },
     ],
   };
-  it('reports rows whose template variables are not supplied instead of throwing', () => {
-    const { targets, issues } = buildTargetsFromRows(
+  it('fills blank cells from a typed default and imports rows partially otherwise', () => {
+    const { targets, issues, partial } = buildTargetsFromRows(
       [
         { host: '10.0.0.1', port: '443' },
         { host: '10.0.0.2', port: '' },
+        { host: '10.0.0.3', port: '' },
       ],
-      { columns: { host: 'host' }, defaults: { template: 'web' }, vars: { web_port: 'port' } },
+      {
+        columns: { host: 'host' },
+        defaults: { template: 'web' },
+        vars: { web_port: 'port' },
+        varDefaults: { web_port: '8443' },
+      },
       [needsPort],
     );
-    expect(targets.map((target) => target.id)).toEqual(['10-0-0-1']);
-    expect(issues).toHaveLength(1);
-    expect(issues[0]?.row).toBe(2);
-    expect(issues[0]?.message).toMatch(/needs variable "web_port"/);
+    expect(issues).toEqual([]);
+    expect(partial).toEqual([]);
+    expect(targets.map((target) => target.vars?.web_port)).toEqual(['443', '8443', '8443']);
+
+    const noDefault = buildTargetsFromRows(
+      [{ host: '10.0.0.9' }],
+      { columns: { host: 'host' }, defaults: { template: 'web' }, vars: {} },
+      [needsPort],
+    );
+    expect(noDefault.issues).toEqual([]);
+    expect(noDefault.targets).toHaveLength(1);
+    expect(noDefault.partial).toEqual([{ row: 1, targetId: '10-0-0-9', missing: ['web_port'] }]);
   });
 });
