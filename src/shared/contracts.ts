@@ -113,6 +113,8 @@ export interface AppSnapshot {
   databaseHealthy: boolean;
   pausedAll: boolean;
   version: string;
+  /** Full build identifier shown in the UI, e.g. `0.1.0.142` or `0.1.0-local`. */
+  buildVersion: string;
   hasExampleConfiguration: boolean;
   adjacentConfigurationPath?: string;
 }

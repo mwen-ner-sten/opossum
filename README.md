@@ -20,7 +20,7 @@ OPOSSUM is a local, on-demand Windows endpoint monitor. Open it to check hosts, 
 
 ## Install and run
 
-The primary release artifact is `OPOSSUM-0.1.0-portable-x64.exe`. It requires no administrator rights or installer. This MVP build is unsigned, so Windows SmartScreen may show an unrecognized-app warning until a signing certificate is added to a future release.
+The primary release artifact is `OPOSSUM-<version>.<build>-portable-x64.exe`, attached to each [GitHub Release](https://github.com/mwen-ner-sten/opossum/releases). The first three numbers are the semantic version; the fourth is the commit count of the build. It requires no administrator rights or installer. This MVP build is unsigned, so Windows SmartScreen may show an unrecognized-app warning until a signing certificate is added to a future release.
 
 All application data remains under:
 
@@ -200,6 +200,15 @@ npm run build:portable
 ```
 
 The artifact is written to `release\`. Electron Builder rebuilds the native SQLite binding for Electron and packages the runtime with the application.
+
+### Branches, pull requests, and releases
+
+- `dev` is the integration branch and the default. Branch from it (`feat/...`, `fix/...`, `chore/...`) and open pull requests back into it. Pull requests into `dev` are squash-merged, so give each one a conventional-commit title.
+- `main` only ever receives `dev` (as a merge commit, so both branches share history) and the automated release pull request.
+- CI runs on every pull request and on pushes to both branches: fast checks on Linux, then the Electron build, Playwright end-to-end suite, and a portable exe on Windows. The exe is uploaded as a workflow artifact named `opossum-portable-<version>.<build>-<sha>`.
+- Versions follow semver and are chosen by [release-please](https://github.com/googleapis/release-please) from commit prefixes: `feat:` bumps minor, `fix:` bumps patch, and a `!` or `BREAKING CHANGE:` footer bumps major. Because the YAML configuration and import templates are a user-facing contract, a major bump means existing configuration may need migration.
+- Merging `dev` into `main` opens (or refreshes) a release pull request with the next version and changelog. Merging that creates the tag and GitHub Release and attaches the portable exe. A follow-up pull request syncs `main` back into `dev`.
+- The fourth version position (`0.1.0.142`) is the commit count of the built branch, injected by CI through `BUILD_NUMBER`. Local builds show `-local` instead.
 
 ## Common failures
 

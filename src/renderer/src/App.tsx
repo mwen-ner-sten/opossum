@@ -307,7 +307,7 @@ export function App() {
             <small>Session since {new Date(snapshot.session.startedAt).toLocaleTimeString()}</small>
           </div>
           <div className="rail-meta">
-            <small>v{snapshot.version} · MIT</small>
+            <small>v{snapshot.buildVersion} · MIT</small>
             <div className="theme-switch" aria-label="Theme">
               <button
                 className={theme === 'light' ? 'active' : ''}

@@ -2,7 +2,9 @@ declare const __BUILD_NUMBER__: string | undefined;
 
 /** Fourth version position: commit count on the built branch, injected at build time by CI. */
 const buildNumber =
-  typeof __BUILD_NUMBER__ === 'string' && __BUILD_NUMBER__.length > 0 ? __BUILD_NUMBER__ : undefined;
+  typeof __BUILD_NUMBER__ === 'string' && __BUILD_NUMBER__.length > 0
+    ? __BUILD_NUMBER__
+    : undefined;
 
 // The semantic version is bumped by release-please; keep it in sync with package.json.
 const version = '0.1.0'; // x-release-please-version

@@ -153,7 +153,9 @@ export class ApplicationService {
         this.notePersistenceFailure('heartbeat', error);
       }
     }, 30_000);
-    this.logger.info(`Session ${this.session.id} started (${PRODUCT.name} ${PRODUCT.version})`);
+    this.logger.info(
+      `Session ${this.session.id} started (${PRODUCT.name} ${PRODUCT.buildVersion})`,
+    );
   }
 
   private notePersistenceSuccess(): void {
@@ -185,6 +187,7 @@ export class ApplicationService {
       databaseHealthy: this.databaseHealthy,
       pausedAll: this.scheduler.isPausedAll,
       version: PRODUCT.version,
+      buildVersion: PRODUCT.buildVersion,
       hasExampleConfiguration: Boolean(this.exampleConfigurationYaml),
       ...(this.adjacentConfigurationPath
         ? { adjacentConfigurationPath: this.adjacentConfigurationPath }
