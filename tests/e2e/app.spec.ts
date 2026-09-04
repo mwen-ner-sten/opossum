@@ -119,7 +119,9 @@ test('keyboard navigation reaches primary workspaces', async () => {
   await historyButton.click();
   await expect(window.getByRole('heading', { name: 'Monitoring sessions' })).toBeVisible();
   await window.getByRole('button', { name: /Retention settings/ }).click();
-  await expect(window.getByRole('heading', { name: 'Defaults, retention, and storage' })).toBeVisible();
+  await expect(
+    window.getByRole('heading', { name: 'Defaults, retention, and storage' }),
+  ).toBeVisible();
 });
 
 test('templates drive linked targets and the import builder creates sites from pasted rows', async () => {

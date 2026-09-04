@@ -581,7 +581,7 @@
 }
 .var-row {
   display: grid;
-  grid-template-columns: 200px auto 1fr;
+  grid-template-columns: minmax(120px, 200px) auto minmax(0, 1fr);
   gap: 10px;
   align-items: center;
   font-size: var(--text-sm);
@@ -774,9 +774,12 @@
 }
 .var-need-row {
   display: grid;
-  grid-template-columns: 170px 1fr 1fr auto;
-  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px 8px;
   align-items: center;
+}
+.var-need-row > small {
+  grid-column: 2 / -1;
 }
 .var-need-row select,
 .var-need-row input {

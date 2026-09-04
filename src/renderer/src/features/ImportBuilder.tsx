@@ -280,8 +280,7 @@ export function ImportBuilder({
               </div>
               {templates.length === 0 && (
                 <div className="warning-box">
-                  No templates exist yet. Create one under Targets so imported rows have
-                  checks.
+                  No templates exist yet. Create one under Targets so imported rows have checks.
                 </div>
               )}
               {neededVars.length > 0 && (
