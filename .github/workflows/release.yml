@@ -41,10 +41,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run build
       - name: Compute build number (commit count)
         shell: bash
         run: echo "BUILD_NUMBER=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+      - run: npm run build
       - name: Portable build
         run: npx electron-builder --win portable --x64 --publish never
       - name: Attach exe to the GitHub Release

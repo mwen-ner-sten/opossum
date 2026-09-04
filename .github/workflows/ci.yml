@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   checks:
-    name: Format, lint, typecheck, unit tests
+    name: Format, lint, typecheck
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -28,16 +28,9 @@ jobs:
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm run test:coverage
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage
-          path: coverage/
-          if-no-files-found: ignore
 
   build:
-    name: Build, end-to-end, portable exe (Windows)
+    name: Tests, build, end-to-end, portable exe (Windows)
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
@@ -49,9 +42,6 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run build
-      - name: End-to-end (Electron + Playwright)
-        run: npx playwright test
       - name: Compute build number (commit count)
         id: buildnum
         shell: bash
@@ -61,6 +51,17 @@ jobs:
           version=$(node -p "require('./package.json').version")
           echo "BUILD_NUMBER=$count" >> "$GITHUB_ENV"
           echo "label=$version.$count-$sha" >> "$GITHUB_OUTPUT"
+      # Unit and integration tests mock ping.exe and use Windows sockets, so they run here.
+      - run: npm run test:coverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore
+      - run: npm run build
+      - name: End-to-end (Electron + Playwright)
+        run: npx playwright test
       - name: Portable build
         run: npx electron-builder --win portable --x64 --publish never
       - uses: actions/upload-artifact@v4
