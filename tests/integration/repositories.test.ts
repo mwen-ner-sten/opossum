@@ -150,6 +150,12 @@ describe('sessions and timelines', () => {
       category: 'timeout',
     });
     repositories.closeSession(first.id);
+    // Session start times have millisecond resolution and paging uses a strict "before", so make
+    // sure the second session starts in a later millisecond than the first.
+    const firstStartedAt = Date.now();
+    while (Date.now() === firstStartedAt) {
+      /* spin for at most a millisecond */
+    }
     const current = repositories.createSession('t');
     expect(repositories.sessions.latestOther(current.id)?.id).toBe(first.id);
     expect(repositories.sessions.get(first.id)).toMatchObject({
