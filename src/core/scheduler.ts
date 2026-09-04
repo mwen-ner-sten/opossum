@@ -41,6 +41,12 @@ interface Entry {
 const keyFor = (targetId: string, checkId: string): string => `${targetId}\0${checkId}`;
 const DEFAULT_SOFT_FAIL_RETRY_MS = 2_000;
 
+/** Keeps the moment a PASS/FAIL status began; a result with a different status restarts it. */
+function statusSince(previous: LiveCheckState, result: CheckResult): string {
+  const held = !previous.isHistorical && previous.result?.status === result.status;
+  return held ? (previous.statusSince ?? result.completedAt) : result.completedAt;
+}
+
 export class Scheduler {
   private readonly entries = new Map<string, Entry>();
   private readonly waiting: Array<() => Promise<void>> = [];
@@ -379,7 +385,13 @@ export class Scheduler {
     }
     entry.state = softFail
       ? { ...entry.state, status: entry.state.result?.status ?? 'UNKNOWN' }
-      : { ...entry.state, status: paused ? 'PAUSED' : result.status, result, isHistorical: false };
+      : {
+          ...entry.state,
+          status: paused ? 'PAUSED' : result.status,
+          result,
+          statusSince: statusSince(entry.state, result),
+          isHistorical: false,
+        };
     const rerun = entry.manualQueued;
     entry.manualQueued = false;
     if (paused) this.recordPaused(entry);

@@ -5,7 +5,8 @@ import type { AppSnapshot, TimelineRange } from '@shared/contracts';
 import { RelativeTime } from '../../components/RelativeTime';
 import { StatusBadge } from '../../components/StatusBadge';
 import { Timeline } from '../../components/Timeline';
-import { expectedStatusText, formatDuration } from './format';
+import { useNow } from '../../hooks/useNow';
+import { expectedStatusText, formatDuration, formatHeld } from './format';
 
 export interface SelectedCheck {
   target: TargetConfig;
@@ -31,8 +32,10 @@ export function DetailPanel({
   onClose(): void;
   onCopy(text: string, label: string): Promise<void>;
 }) {
+  const now = useNow();
   const check = selected.target.checks.find((item) => item.id === selected.checkId);
   if (!check) return null;
+  const held = formatHeld(state?.statusSince, now);
   const result = state?.result ?? state?.lastKnown?.result;
   const resultText = result
     ? `${selected.target.name} / ${check.name}: ${result.status}, ${result.summary} (${new Date(result.completedAt).toLocaleString()})`
@@ -81,6 +84,18 @@ export function DetailPanel({
             <dt>Next run</dt>
             <dd>{state?.nextRunAt ? <RelativeTime value={state.nextRunAt} /> : '—'}</dd>
           </div>
+          {state?.statusSince && !state.isHistorical && (
+            <div>
+              <dt>{state.status === 'FAIL' ? 'Failing since' : 'Status since'}</dt>
+              <dd>
+                {new Date(state.statusSince).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+                {held ? ` (${held})` : ''}
+              </dd>
+            </div>
+          )}
         </dl>
       </div>
       <div className="detail-actions">

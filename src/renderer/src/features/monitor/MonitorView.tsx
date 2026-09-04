@@ -22,7 +22,8 @@ import { missingTemplateVariables } from '@core/templates';
 import { StatusBadge } from '../../components/StatusBadge';
 import { CheckRow } from './CheckRow';
 import { DetailPanel, type SelectedCheck } from './DetailPanel';
-import { keyFor } from './format';
+import { countStatuses, keyFor, summarizeStatuses } from './format';
+import { TargetSummary } from './TargetSummary';
 
 const PIP_ORDER: CheckStatus[] = ['FAIL', 'CHECKING', 'UNKNOWN', 'PASS', 'PAUSED'];
 
@@ -55,6 +56,9 @@ export function MonitorView({
   const [collapsed, setCollapsed] = useState<Set<string>>(
     () => new Set(JSON.parse(localStorage.getItem('collapsedGroups') ?? '[]') as string[]),
   );
+  const [collapsedTargets, setCollapsedTargets] = useState<Set<string>>(
+    () => new Set(JSON.parse(localStorage.getItem('collapsedTargets') ?? '[]') as string[]),
+  );
   const [selected, setSelected] = useState<SelectedCheck>();
   const [range, setRange] = useState<TimelineRange>('current');
   const [timeline, setTimeline] = useState<TimelineResult>();
@@ -75,6 +79,16 @@ export function MonitorView({
   useEffect(() => {
     localStorage.setItem('collapsedGroups', JSON.stringify([...collapsed]));
   }, [collapsed]);
+  useEffect(() => {
+    localStorage.setItem('collapsedTargets', JSON.stringify([...collapsedTargets]));
+  }, [collapsedTargets]);
+  const toggleTarget = (id: string): void =>
+    setCollapsedTargets((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   // "/" focuses search from anywhere on the board, like most operator consoles.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -219,11 +233,13 @@ export function MonitorView({
         </div>
         <div className="target-groups">
           {groups.map(([group, targets]) => {
-            const targetChecks = targets.flatMap((target) =>
-              orderedChecks(target).map((check) => stateOf(target, check).status),
+            const groupStates = targets.flatMap((target) =>
+              orderedChecks(target).map((check) => stateOf(target, check)),
             );
+            const targetChecks = groupStates.map((state) => state.status);
             if (targetChecks.length === 0) return null;
             const isCollapsed = collapsed.has(group);
+            const shownTargets = targets.filter((target) => orderedChecks(target).length > 0);
             return (
               <section className="target-group" key={group}>
                 <button
@@ -240,7 +256,10 @@ export function MonitorView({
                 >
                   {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
                   <span>{group}</span>
-                  <small>{targetChecks.length}</small>
+                  <small>
+                    {shownTargets.length} target{shownTargets.length === 1 ? '' : 's'} ·{' '}
+                    {summarizeStatuses(countStatuses(groupStates))}
+                  </small>
                   <span className="group-pips" aria-hidden="true">
                     {PIP_ORDER.flatMap((status) =>
                       targetChecks
@@ -255,17 +274,44 @@ export function MonitorView({
                   targets.map((target) => {
                     const checks = orderedChecks(target);
                     if (checks.length === 0) return null;
-                    const targetStatus = aggregateStatus(
-                      checks.map((check) => stateOf(target, check).status),
-                    );
+                    const states = checks.map((check) => stateOf(target, check));
+                    const targetStatus = aggregateStatus(states.map((state) => state.status));
+                    const targetCollapsed = collapsedTargets.has(target.id);
                     return (
-                      <div className="target-block" key={target.id}>
+                      <div
+                        className={`target-block ${targetCollapsed ? 'collapsed' : ''}`}
+                        key={target.id}
+                      >
                         <div className="target-heading">
                           <div>
+                            <button
+                              type="button"
+                              className="icon-button collapse-toggle"
+                              aria-expanded={!targetCollapsed}
+                              aria-label={`${targetCollapsed ? 'Expand' : 'Collapse'} ${target.name}`}
+                              onClick={() => toggleTarget(target.id)}
+                            >
+                              {targetCollapsed ? (
+                                <ChevronRight size={15} />
+                              ) : (
+                                <ChevronDown size={15} />
+                              )}
+                            </button>
                             <Server size={15} />
                             <strong>{target.name}</strong>
                             <code>{target.host}</code>
                             <StatusBadge status={targetStatus} subtle />
+                            <TargetSummary
+                              checks={checks}
+                              states={states}
+                              selectedCheckId={
+                                selected?.target.id === target.id ? selected.checkId : undefined
+                              }
+                              onSelect={(checkId) => {
+                                setSelected({ target, checkId });
+                                if (targetCollapsed) toggleTarget(target.id);
+                              }}
+                            />
                             {missingTemplateVariables(
                               target,
                               snapshot.templates.find((item) => item.id === target.template),
@@ -318,24 +364,27 @@ export function MonitorView({
                             </button>
                           </div>
                         </div>
-                        {checks.map((check) => (
-                          <CheckRow
-                            key={check.id}
-                            target={target}
-                            check={check}
-                            state={stateOf(target, check)}
-                            timeoutSeconds={
-                              check.timeout_seconds ?? snapshot.settings.default_timeout_seconds
-                            }
-                            selected={
-                              selected?.target.id === target.id && selected.checkId === check.id
-                            }
-                            onSelect={() => setSelected({ target, checkId: check.id })}
-                          />
-                        ))}
-                        <button className="delete-target-link" onClick={() => onDelete(target)}>
-                          Delete target…
-                        </button>
+                        {!targetCollapsed &&
+                          checks.map((check) => (
+                            <CheckRow
+                              key={check.id}
+                              target={target}
+                              check={check}
+                              state={stateOf(target, check)}
+                              timeoutSeconds={
+                                check.timeout_seconds ?? snapshot.settings.default_timeout_seconds
+                              }
+                              selected={
+                                selected?.target.id === target.id && selected.checkId === check.id
+                              }
+                              onSelect={() => setSelected({ target, checkId: check.id })}
+                            />
+                          ))}
+                        {!targetCollapsed && (
+                          <button className="delete-target-link" onClick={() => onDelete(target)}>
+                            Delete target…
+                          </button>
+                        )}
                       </div>
                     );
                   })}

@@ -716,3 +716,59 @@
     grid-template-columns: minmax(150px, 1fr) 105px minmax(150px, 1.2fr) 80px 110px 66px;
   }
 }
+
+/* --- Target summary: step strip and one-line counts --- */
+.target-heading .collapse-toggle {
+  margin-left: -6px;
+  color: var(--faint);
+}
+.target-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin-left: 4px;
+}
+.target-summary small {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.step-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.step-pip {
+  width: 14px;
+  height: 10px;
+  border: 0;
+  border-radius: 3px;
+  padding: 0;
+  cursor: pointer;
+  transition: transform var(--fast) var(--ease);
+}
+.step-pip:hover,
+.step-pip:focus-visible {
+  transform: scaleY(1.35);
+  outline: none;
+}
+.step-pip.pip-selected {
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 3.5px var(--accent);
+}
+.step-pip.pip-blocked {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--fail) 0 2px,
+    color-mix(in srgb, var(--fail) 25%, var(--surface)) 2px 4px
+  );
+}
+.group-heading small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

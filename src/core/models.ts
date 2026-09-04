@@ -54,6 +54,8 @@ export interface LiveCheckState {
   nextRunAt?: string | undefined;
   /** Present while failure backoff has stretched the interval; the stretched interval in ms. */
   backoffMs?: number | undefined;
+  /** When the current PASS/FAIL status was first observed this session. */
+  statusSince?: string | undefined;
   isHistorical: boolean;
 }
 

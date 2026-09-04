@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { Pause, Play, RotateCw } from 'lucide-react';
 import type { CheckConfig, TargetConfig } from '@core/config';
 import type { LiveCheckState } from '@core/models';
+import { HeldFor } from '../../components/HeldFor';
 import { RelativeTime } from '../../components/RelativeTime';
 import { StatusBadge } from '../../components/StatusBadge';
 import { formatDuration, latencyRatio } from './format';
@@ -46,16 +47,24 @@ export const CheckRow = memo(function CheckRow({
       </span>
       <span>
         <StatusBadge status={state.status} blocked={blocked} />
-        {state.isHistorical && <em className="history-label">Last known</em>}
+        {state.isHistorical ? (
+          <em className="history-label">Last known</em>
+        ) : (
+          (state.status === 'PASS' || state.status === 'FAIL') && (
+            <em className="history-label">
+              <HeldFor since={state.statusSince} />
+            </em>
+          )
+        )}
       </span>
       <span className="diagnostic" title={result?.summary}>
         {result?.summary ??
           (state.status === 'CHECKING' ? 'Check in progress…' : 'No result this session')}
       </span>
       <span className="latency">
-        <span>{formatDuration(result?.durationMs)}</span>
+        <span>{blocked ? 'Not run' : formatDuration(result?.durationMs)}</span>
         <span className={`latency-bar ${heat}`} aria-hidden="true">
-          <i style={{ width: `${ratio * 100}%` }} />
+          <i style={{ width: `${blocked ? 0 : ratio * 100}%` }} />
         </span>
       </span>
       <span className="times">

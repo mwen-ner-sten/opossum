@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatDuration,
+  formatHeld,
   formatRelative,
   latencyRatio,
+  summarizeStatuses,
 } from '../../src/renderer/src/features/monitor/format';
 
 const NOW = Date.parse('2026-09-03T12:00:00Z');
@@ -35,5 +37,27 @@ describe('latencyRatio', () => {
     expect(latencyRatio(2_500, 5)).toBe(0.5);
     expect(latencyRatio(9_000, 5)).toBe(1);
     expect(latencyRatio(100, 0)).toBe(0);
+  });
+});
+
+describe('formatHeld', () => {
+  it('reports minutes, hours, and days, and nothing under a minute', () => {
+    expect(formatHeld(undefined, NOW)).toBeUndefined();
+    expect(formatHeld(at(-30), NOW)).toBeUndefined();
+    expect(formatHeld(at(-250), NOW)).toBe('4 min');
+    expect(formatHeld(at(-7_500), NOW)).toBe('2 h 05 min');
+    expect(formatHeld(at(-100_000), NOW)).toBe('1 d 3 h');
+  });
+});
+
+describe('summarizeStatuses', () => {
+  const base = { PASS: 0, FAIL: 0, CHECKING: 0, UNKNOWN: 0, PAUSED: 0, blocked: 0 };
+  it('leads with problems and mentions passing only alongside them', () => {
+    expect(summarizeStatuses({ ...base, PASS: 3 })).toBe('All passing');
+    expect(summarizeStatuses(base)).toBe('No checks');
+    expect(summarizeStatuses({ ...base, FAIL: 3, blocked: 2, PASS: 1 })).toBe(
+      '1 failing · 2 blocked · 1 passing',
+    );
+    expect(summarizeStatuses({ ...base, CHECKING: 1, PAUSED: 2 })).toBe('1 checking · 2 paused');
   });
 });

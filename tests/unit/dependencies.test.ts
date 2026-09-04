@@ -166,6 +166,46 @@ describe('check dependencies', () => {
   });
 });
 
+describe('status held since', () => {
+  it('keeps the first timestamp while the status holds and resets when it flips', async () => {
+    let status: 'PASS' | 'FAIL' = 'FAIL';
+    const ping: CheckRunner = async () => {
+      await tick(1);
+      return result(status);
+    };
+    const target = chain();
+    target.checks = [target.checks[0]!];
+    let states: LiveCheckState[] = [];
+    const scheduler = new Scheduler(
+      DEFAULT_SETTINGS,
+      [target],
+      [],
+      {
+        onStatesChanged: (next) => {
+          states = next;
+        },
+        onResult: () => undefined,
+        onPaused: () => undefined,
+      },
+      { runners: { ping } },
+    );
+    scheduler.start();
+    await tick(30);
+    const since = states[0]?.statusSince;
+    expect(since).toBe(states[0]?.result?.completedAt);
+    scheduler.runCheck('site', 'ping');
+    await tick(30);
+    expect(states[0]?.statusSince).toBe(since);
+    expect(states[0]?.result?.completedAt).not.toBe(since);
+    status = 'PASS';
+    scheduler.runCheck('site', 'ping');
+    await tick(30);
+    expect(states[0]?.status).toBe('PASS');
+    expect(states[0]?.statusSince).toBe(states[0]?.result?.completedAt);
+    await scheduler.stop();
+  });
+});
+
 describe('failure backoff', () => {
   it('doubles the interval after the failure threshold and resets on recovery', async () => {
     let status: 'PASS' | 'FAIL' = 'FAIL';
