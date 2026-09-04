@@ -108,7 +108,7 @@ function buildMenu(): Menu {
             void dialog.showMessageBox({
               type: 'info',
               title: `About ${PRODUCT.name}`,
-              message: `${PRODUCT.name} ${PRODUCT.version}`,
+              message: `${PRODUCT.name} ${PRODUCT.buildVersion}`,
               detail: `${PRODUCT.fullName}\n\n${PRODUCT.license}\n${PRODUCT.copyright}`,
             }),
         },

@@ -251,8 +251,8 @@ export function CheckFields({
             Runs only after these earlier steps pass
             <small>
               {' '}
-              · a failing precursor records this check as blocked without running it. Move a
-              check up to make it available here.
+              · a failing precursor records this check as blocked without running it. Move a check
+              up to make it available here.
             </small>
           </legend>
           {siblings.map((sibling) => (

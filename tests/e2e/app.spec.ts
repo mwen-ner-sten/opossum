@@ -72,9 +72,17 @@ test('example configuration loads and pause all preserves an individual pause', 
   await expect(window.getByText('Chicago BMS Server 01').first()).toBeVisible();
 
   await window.getByRole('button', { name: 'Pause Host ping' }).first().click();
+  // A pause requested mid-run takes effect when the in-flight ping finishes (up to its 5 s
+  // timeout). Wait for it before pausing everything so the individual pause is what "Pause all"
+  // sees, and "Resume all" leaves it alone.
+  await expect(window.getByRole('button', { name: 'Resume Host ping' }).first()).toBeVisible({
+    timeout: 15_000,
+  });
   await window.getByRole('button', { name: 'Pause all' }).click();
   await expect(window.getByRole('button', { name: 'Resume all' })).toBeVisible();
   await window.getByRole('button', { name: 'Resume all' }).click();
+  // The session-wide control flips back to "Pause all" once the resume has been applied.
+  await expect(window.getByRole('button', { name: 'Pause all' })).toBeVisible();
   await expect(window.getByRole('button', { name: 'Resume Host ping' }).first()).toBeVisible();
   const resumeButtons = await window.getByRole('button', { name: /^Resume / }).count();
   expect(resumeButtons).toBe(1);

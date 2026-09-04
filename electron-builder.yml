@@ -13,11 +13,11 @@ npmRebuild: true
 win:
   icon: build/icon.ico
   executableName: opossum
-  artifactName: OPOSSUM-${version}-portable-${arch}.${ext}
+  artifactName: OPOSSUM-${buildVersion}-portable-${arch}.${ext}
   target:
     - target: portable
       arch:
         - x64
 portable:
-  artifactName: OPOSSUM-${version}-portable-${arch}.${ext}
+  artifactName: OPOSSUM-${buildVersion}-portable-${arch}.${ext}
 publish: null

@@ -120,8 +120,8 @@ export function CheckFlow({
       <p className="check-flow-caption">
         {starts} start step{starts === 1 ? '' : 's'}, {layout.columns - 1} stage
         {layout.columns - 1 === 1 ? '' : 's'}, {ends} end node{ends === 1 ? '' : 's'}. Steps with
-        nothing above them start straight away; a step runs only after every step feeding it
-        passes. Disabled steps are dimmed.
+        nothing above them start straight away; a step runs only after every step feeding it passes.
+        Disabled steps are dimmed.
       </p>
     </div>
   );

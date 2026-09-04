@@ -1,0 +1,36 @@
+name: Sync main into dev
+
+# After a release lands on main (version bump, changelog), open a PR that
+# carries it back into dev so the two branches never drift.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Open or update the back-merge PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          ahead=$(git rev-list --count origin/dev..origin/main)
+          if [ "$ahead" = "0" ]; then
+            echo "dev already contains main; nothing to sync."
+            exit 0
+          fi
+          existing=$(gh pr list --base dev --head main --state open --json number --jq '.[0].number')
+          if [ -z "$existing" ]; then
+            gh pr create --base dev --head main \
+              --title "chore: sync main into dev" \
+              --body "Automated back-merge of release commits from \`main\` into \`dev\`."
+            existing=$(gh pr list --base dev --head main --state open --json number --jq '.[0].number')
+          fi
+          gh pr merge "$existing" --merge --auto || echo "auto-merge not enabled; merge manually."

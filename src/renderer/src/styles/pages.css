@@ -827,9 +827,8 @@
 }
 .check-flow-scroll {
   overflow-x: auto;
-  background:
-    radial-gradient(color-mix(in srgb, var(--line) 80%, transparent) 1px, transparent 1px) 0 0 /
-      14px 14px;
+  background: radial-gradient(color-mix(in srgb, var(--line) 80%, transparent) 1px, transparent 1px)
+    0 0 / 14px 14px;
 }
 .check-flow svg {
   display: block;
