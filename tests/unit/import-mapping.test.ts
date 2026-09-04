@@ -76,3 +76,39 @@ describe('buildTargetsFromRows', () => {
     expect(issues[0]?.message).toMatch(/No template/);
   });
 });
+
+describe('template variables during import', () => {
+  const needsPort: CheckTemplate = {
+    id: 'web',
+    name: 'Web',
+    checks: [
+      {
+        id: 'web',
+        name: 'Web',
+        type: 'http',
+        url: 'https://{{host}}:{{vars.web_port}}/',
+        method: 'GET',
+        expected_status: '200-399',
+        headers: {},
+        verify_tls: true,
+        follow_redirects: true,
+        enabled: true,
+        tags: [],
+      },
+    ],
+  };
+  it('reports rows whose template variables are not supplied instead of throwing', () => {
+    const { targets, issues } = buildTargetsFromRows(
+      [
+        { host: '10.0.0.1', port: '443' },
+        { host: '10.0.0.2', port: '' },
+      ],
+      { columns: { host: 'host' }, defaults: { template: 'web' }, vars: { web_port: 'port' } },
+      [needsPort],
+    );
+    expect(targets.map((target) => target.id)).toEqual(['10-0-0-1']);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.row).toBe(2);
+    expect(issues[0]?.message).toMatch(/needs variable "web_port"/);
+  });
+});

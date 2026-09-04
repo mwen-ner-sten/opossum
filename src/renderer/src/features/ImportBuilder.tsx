@@ -4,6 +4,7 @@ import type { CheckTemplate } from '@core/config';
 import {
   MAPPED_FIELDS,
   buildTargetsFromRows,
+  templateVariables,
   type ImportMapping,
   type MappedField,
 } from '@core/import-mapping';
@@ -123,6 +124,9 @@ export function ImportBuilder({
     ...Object.values(mapping.vars),
   ]);
   const unmapped = source.columns.filter((column) => !mappedColumns.has(column));
+  const defaultTemplate = templates.find((item) => item.id === mapping.defaults.template);
+  const neededVars = templateVariables(defaultTemplate);
+  const missingVars = neededVars.filter((name) => !mapping.vars[name]);
   const canReview =
     Boolean(mapping.columns.host) &&
     (Boolean(mapping.columns.template) || Boolean(mapping.defaults.template));
@@ -276,6 +280,23 @@ export function ImportBuilder({
                 <div className="warning-box">
                   No templates exist yet. Create one under Configuration so imported rows have
                   checks.
+                </div>
+              )}
+              {neededVars.length > 0 && (
+                <div className={missingVars.length ? 'warning-box' : 'info-box'}>
+                  Template <strong>{defaultTemplate?.name}</strong> reads{' '}
+                  {neededVars.map((name) => (
+                    <code key={name} className={missingVars.includes(name) ? 'missing' : ''}>
+                      {`{{vars.${name}}}`}
+                    </code>
+                  ))}
+                  {missingVars.length > 0 && (
+                    <>
+                      {' '}
+                      — map a column to {missingVars.map((name) => `"${name}"`).join(', ')} under
+                      Template variables, or every row will be skipped.
+                    </>
+                  )}
                 </div>
               )}
             </div>

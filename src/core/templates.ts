@@ -6,6 +6,7 @@ import {
   type CheckConfig,
   type CheckTemplate,
   type TargetConfig,
+  type TemplateCheckConfig,
 } from './config';
 
 /** The subset of a target that placeholders can read. */
@@ -86,7 +87,15 @@ function substituteDeep<T>(value: T, context: TemplateContext): T {
  */
 export function expandTemplate(template: CheckTemplate, context: TemplateContext): CheckConfig[] {
   return template.checks.map((check) => {
-    const expanded = substituteDeep(check, context);
+    let expanded: TemplateCheckConfig;
+    try {
+      expanded = substituteDeep(check, context);
+    } catch (error) {
+      if (error instanceof PlaceholderError) throw error;
+      throw new Error(
+        `Template "${template.id}" check "${check.id}": ${error instanceof Error ? error.message : 'invalid'}`,
+      );
+    }
     const parsed = checkSchema.safeParse({ ...expanded, from_template: template.id });
     if (!parsed.success) {
       const issue = parsed.error.issues[0];

@@ -745,3 +745,20 @@
 .backoff-tag {
   color: var(--unknown);
 }
+
+.info-box {
+  margin-top: 13px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 11px 12px;
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+}
+.info-box code,
+.warning-box code {
+  margin-right: 4px;
+}
+.warning-box code.missing {
+  font-weight: 700;
+  text-decoration: underline;
+}

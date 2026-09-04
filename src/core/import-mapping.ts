@@ -1,4 +1,5 @@
 import { targetSchema, type CheckTemplate, type TargetConfig } from './config';
+import { PlaceholderError, resolveChecks, templatePlaceholders } from './templates';
 
 /** A row of tabular input after every cell has been reduced to a trimmed string. */
 export type ImportRow = Record<string, string>;
@@ -101,7 +102,8 @@ export function buildTargetsFromRows(
   mapping: ImportMapping,
   templates: CheckTemplate[],
 ): BuiltTargets {
-  const templateIds = new Set(templates.map((template) => template.id));
+  const templateById = new Map(templates.map((template) => [template.id, template]));
+  const templateIds = new Set(templateById.keys());
   const targets: TargetConfig[] = [];
   const issues: ImportRowIssue[] = [];
   const seenIds = new Set<string>();
@@ -162,8 +164,31 @@ export function buildTargetsFromRows(
       });
       return;
     }
+    // Expand the template now so a missing variable or a bad URL is a row issue, not a crash.
+    try {
+      resolveChecks(parsed.data, templateById.get(template));
+    } catch (error) {
+      issues.push({
+        row: rowNumber,
+        message:
+          error instanceof PlaceholderError && error.placeholder.startsWith('vars.')
+            ? `Template "${template}" needs variable "${error.placeholder.slice(5)}"; map a column to it under Template variables`
+            : error instanceof Error
+              ? error.message
+              : 'Template could not be applied',
+      });
+      return;
+    }
     seenIds.add(id);
     targets.push(parsed.data);
   });
   return { targets, issues };
+}
+
+/** Variable names a template reads via `{{vars.<name>}}`, for the mapping UI. */
+export function templateVariables(template: CheckTemplate | undefined): string[] {
+  if (!template) return [];
+  return templatePlaceholders(template)
+    .filter((name) => name.startsWith('vars.'))
+    .map((name) => name.slice('vars.'.length));
 }

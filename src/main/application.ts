@@ -74,6 +74,15 @@ export interface ApplicationOptions {
   exampleConfigurationYaml?: string;
 }
 
+/** Expanded checks for a capacity projection; falls back to own checks if expansion fails. */
+function projectedChecks(target: TargetConfig, template: CheckTemplate | undefined) {
+  try {
+    return resolveChecks(target, template);
+  } catch {
+    return target.checks;
+  }
+}
+
 export class ApplicationService {
   readonly repositories: Repositories;
   readonly session: SessionSummary;
@@ -289,9 +298,7 @@ export class ApplicationService {
       ...existing.filter((target) => !incomingIds.has(target.id)),
       ...targets.map((target) => ({
         ...target,
-        checks: target.template
-          ? resolveChecks(target, templateById.get(target.template))
-          : target.checks,
+        checks: projectedChecks(target, templateById.get(target.template ?? '')),
       })),
     ];
     const projectedCapacity = assessCapacity(settings, projected);
