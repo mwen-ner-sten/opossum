@@ -1,14 +1,16 @@
 version: 2
 updates:
+  # One grouped PR per ecosystem, weekly, never a flood of individual bumps.
   - package-ecosystem: npm
     directory: /
     target-branch: dev
     schedule:
       interval: weekly
       day: monday
+    open-pull-requests-limit: 1
     groups:
-      npm-minor-and-patch:
-        update-types: [minor, patch]
+      npm-dependencies:
+        patterns: ['*']
     commit-message:
       prefix: chore
       include: scope
@@ -18,5 +20,9 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns: ['*']
     commit-message:
       prefix: ci
