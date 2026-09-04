@@ -34,4 +34,7 @@ jobs:
             gh pr create --base dev --head "$head"               --title "chore: sync main into dev"               --body "Automated back-merge of release commits from \`main\` into \`dev\`."
             existing=$(gh pr list --base dev --head "$head" --state open --json number --jq '.[0].number')
           fi
-          gh pr merge "$existing" --merge --auto || echo "auto-merge not enabled; merge manually."
+          # Print the failure reason so a silent "merge manually" never hides the cause.
+          if ! output=$(gh pr merge "$existing" --merge --auto 2>&1); then
+            echo "::warning::auto-merge could not be enabled on #$existing: $output"
+          fi
