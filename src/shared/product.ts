@@ -7,7 +7,7 @@ const buildNumber =
     : undefined;
 
 // The semantic version is bumped by release-please; keep it in sync with package.json.
-const version = '0.1.0'; // x-release-please-version
+const version = '1.0.0'; // x-release-please-version
 
 export const PRODUCT = {
   name: 'OPOSSUM',
