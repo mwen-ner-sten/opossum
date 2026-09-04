@@ -1,42 +1,50 @@
-import { useEffect, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
-import { targetSchema, type CheckConfig, type TargetConfig } from '@core/config';
+import { useEffect, useMemo, useState } from 'react';
+import { Layers } from 'lucide-react';
+import { targetSchema, type CheckTemplate, type TargetConfig } from '@core/config';
+import {
+  ownChecks,
+  placeholderUsages,
+  resolveChecksPartial,
+  templatePlaceholders,
+} from '@core/templates';
+import { VariableHelp } from './editor/VariableHelp';
 import { Modal } from '../components/Modal';
+import { CheckEditorList } from './editor/CheckEditorList';
+import { newPingCheck } from './editor/check-helpers';
 
-const newCheck = (): CheckConfig => ({
-  id: 'host-ping',
-  name: 'Host ping',
-  type: 'ping',
-  enabled: true,
-  tags: [],
-});
 const blankTarget = (): TargetConfig => ({
   id: '',
   name: '',
   host: '',
   enabled: true,
-  checks: [newCheck()],
+  checks: [newPingCheck()],
 });
 
-function parseHeaders(source: string): Record<string, string> {
-  const headers: Record<string, string> = {};
+function parseVars(source: string): Record<string, string> {
+  const vars: Record<string, string> = {};
   for (const line of source.split('\n')) {
-    const split = line.indexOf(':');
-    if (split > 0) headers[line.slice(0, split).trim()] = line.slice(split + 1).trim();
+    const split = line.indexOf('=');
+    if (split > 0) vars[line.slice(0, split).trim()] = line.slice(split + 1).trim();
   }
-  return headers;
+  return vars;
 }
+const varsText = (vars: Record<string, string> | undefined): string =>
+  Object.entries(vars ?? {})
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
 
 export function TargetEditor({
   open,
   target,
   duplicate,
+  templates,
   onClose,
   onSaved,
 }: {
   open: boolean;
   target?: TargetConfig | undefined;
   duplicate?: boolean | undefined;
+  templates: CheckTemplate[];
   onClose(): void;
   onSaved(): void;
 }) {
@@ -46,63 +54,65 @@ export function TargetEditor({
   useEffect(() => {
     if (!open) return;
     if (!target) setDraft(blankTarget());
-    else
+    else {
+      const base = structuredClone(target);
       setDraft({
-        ...structuredClone(target),
+        ...base,
+        checks: ownChecks(base),
         ...(duplicate
           ? {
               id: `${target.id}-copy`,
               name: `${target.name} copy`,
-              checks: target.checks.map((check) => ({ ...check, id: `${check.id}-copy` })),
+              checks: ownChecks(base).map((check) => ({ ...check, id: `${check.id}-copy` })),
             }
           : {}),
       });
+    }
     setErrors([]);
   }, [open, target, duplicate]);
 
-  const updateCheck = (index: number, update: Partial<CheckConfig>): void => {
-    setDraft((current) => ({
-      ...current,
-      checks: current.checks.map((check, item) =>
-        item === index ? ({ ...check, ...update } as CheckConfig) : check,
-      ),
-    }));
-  };
-  const changeType = (index: number, type: CheckConfig['type']): void => {
-    const current = draft.checks[index];
-    if (!current) return;
-    const common = {
-      id: current.id,
-      name: current.name,
-      enabled: current.enabled,
-      tags: current.tags,
-      ...(current.interval_seconds ? { interval_seconds: current.interval_seconds } : {}),
-      ...(current.timeout_seconds ? { timeout_seconds: current.timeout_seconds } : {}),
-    };
-    const check: CheckConfig =
-      type === 'ping'
-        ? { ...common, type }
-        : type === 'tcp'
-          ? { ...common, type, port: 443 }
-          : {
-              ...common,
-              type,
-              url: `https://${draft.host || 'example.internal'}/`,
-              method: 'GET',
-              expected_status: '200-399',
-              headers: {},
-              verify_tls: true,
-              follow_redirects: true,
-            };
-    setDraft((value) => ({
-      ...value,
-      checks: value.checks.map((item, position) => (position === index ? check : item)),
-    }));
-  };
+  const template = templates.find((item) => item.id === draft.template);
+  const neededVars = useMemo(
+    () =>
+      template
+        ? templatePlaceholders(template)
+            .filter((name) => name.startsWith('vars.'))
+            .map((name) => name.slice('vars.'.length))
+        : [],
+    [template],
+  );
+  const inheritedPreview = useMemo(() => {
+    if (!template) return { checks: [], missing: [] as string[], error: '' };
+    try {
+      const { checks, missing } = resolveChecksPartial(
+        {
+          ...draft,
+          checks: [],
+          host: draft.host || 'host.example',
+          name: draft.name || 'Target',
+          id: draft.id || 'target',
+        },
+        template,
+      );
+      return { checks, missing, error: '' };
+    } catch (error) {
+      return {
+        checks: [],
+        missing: [] as string[],
+        error: error instanceof Error ? error.message : 'Cannot expand',
+      };
+    }
+  }, [template, draft]);
+  const ownIds = new Set(draft.checks.map((check) => check.id));
+
   const save = async (): Promise<void> => {
     const parsed = targetSchema.safeParse(draft);
     if (!parsed.success) {
       setErrors(parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`));
+      return;
+    }
+    if (inheritedPreview.error) {
+      setErrors([inheritedPreview.error]);
       return;
     }
     setSaving(true);
@@ -128,10 +138,20 @@ export function TargetEditor({
             ? `Duplicate ${target?.name ?? 'target'}`
             : 'Add target'
       }
-      description="Configure the host and one or more checks. Changes become active immediately."
-      wide
+      description="Configure the host, optionally link a template, and add any target-specific checks. Changes become active immediately."
+      variant="sheet"
+      footer={
+        <>
+          <button className="button ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="button primary" disabled={saving} onClick={() => void save()}>
+            {saving ? 'Saving…' : 'Save target'}
+          </button>
+        </>
+      }
     >
-      <div className="form-grid">
+      <div className="editor-block form-grid">
         <label>
           <span>Target ID</span>
           <input
@@ -184,284 +204,99 @@ export function TargetEditor({
           <span>Target enabled</span>
         </label>
       </div>
-      <div className="section-heading">
-        <div>
-          <h3>Checks</h3>
-          <p>Each check ID must be unique within this target.</p>
-        </div>
-        <button
-          className="button secondary"
-          onClick={() =>
-            setDraft({
-              ...draft,
-              checks: [
-                ...draft.checks,
-                {
-                  ...newCheck(),
-                  id: `check-${draft.checks.length + 1}`,
-                  name: `Check ${draft.checks.length + 1}`,
-                },
-              ],
-            })
-          }
-        >
-          <Plus size={16} /> Add check
-        </button>
-      </div>
-      <div className="check-editors">
-        {draft.checks.map((check, index) => (
-          <div className="check-editor" key={`${index}-${check.id}`}>
-            <div className="check-number">
-              <span>{index + 1}</span>
-              <button
-                className="icon-button danger"
-                aria-label={`Remove ${check.name}`}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      `Remove ${check.name}? Its existing history will remain available after you save.`,
-                    )
-                  )
-                    setDraft({
-                      ...draft,
-                      checks: draft.checks.filter((_, item) => item !== index),
-                    });
-                }}
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
-            <div className="form-grid compact">
-              <label>
-                <span>Check ID</span>
-                <input
-                  value={check.id}
-                  disabled={Boolean(target && !duplicate)}
-                  onChange={(event) => updateCheck(index, { id: event.target.value })}
-                />
-              </label>
-              <label>
-                <span>Name</span>
-                <input
-                  value={check.name}
-                  onChange={(event) => updateCheck(index, { name: event.target.value })}
-                />
-              </label>
-              <label>
-                <span>Type</span>
-                <select
-                  value={check.type}
-                  onChange={(event) => changeType(index, event.target.value as CheckConfig['type'])}
-                >
-                  <option value="ping">Ping</option>
-                  <option value="tcp">TCP port</option>
-                  <option value="http">HTTP / HTTPS</option>
-                </select>
-              </label>
-              {check.type === 'tcp' && (
-                <label>
-                  <span>Port</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="65535"
-                    value={check.port}
-                    onChange={(event) => updateCheck(index, { port: Number(event.target.value) })}
-                  />
-                </label>
-              )}
-              {check.type === 'http' && (
-                <>
-                  <label className="span-2">
-                    <span>URL</span>
-                    <input
-                      value={check.url}
-                      onChange={(event) => updateCheck(index, { url: event.target.value })}
-                    />
-                  </label>
-                  <label>
-                    <span>Method</span>
-                    <select
-                      value={check.method}
-                      onChange={(event) =>
-                        updateCheck(index, { method: event.target.value as 'GET' | 'HEAD' })
-                      }
-                    >
-                      <option>GET</option>
-                      <option>HEAD</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>Expected status</span>
-                    <input
-                      value={
-                        Array.isArray(check.expected_status)
-                          ? check.expected_status.join(',')
-                          : check.expected_status
-                      }
-                      onChange={(event) =>
-                        updateCheck(index, {
-                          expected_status: /^\d+$/.test(event.target.value)
-                            ? Number(event.target.value)
-                            : event.target.value.includes(',')
-                              ? event.target.value.split(',').map(Number)
-                              : event.target.value,
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>Required text</span>
-                    <input
-                      value={check.contains ?? ''}
-                      onChange={(event) =>
-                        updateCheck(index, { contains: event.target.value || undefined })
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>Forbidden text</span>
-                    <input
-                      value={check.not_contains ?? ''}
-                      onChange={(event) =>
-                        updateCheck(index, { not_contains: event.target.value || undefined })
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>Authentication</span>
-                    <select
-                      value={check.auth?.type ?? 'none'}
-                      onChange={(event) =>
-                        updateCheck(index, {
-                          auth:
-                            event.target.value === 'none'
-                              ? undefined
-                              : {
-                                  type: event.target.value as 'basic' | 'digest',
-                                  username_env: check.auth?.username_env ?? 'OPOSSUM_USERNAME',
-                                  password_env: check.auth?.password_env ?? 'OPOSSUM_PASSWORD',
-                                },
-                        })
-                      }
-                    >
-                      <option value="none">None</option>
-                      <option value="basic">Basic</option>
-                      <option value="digest">Digest</option>
-                    </select>
-                  </label>
-                  {check.auth && (
-                    <>
-                      <label>
-                        <span>Username environment variable</span>
-                        <input
-                          value={check.auth.username_env}
-                          onChange={(event) =>
-                            updateCheck(index, {
-                              auth: { ...check.auth!, username_env: event.target.value },
-                            })
-                          }
-                        />
-                      </label>
-                      <label>
-                        <span>Password environment variable</span>
-                        <input
-                          value={check.auth.password_env}
-                          onChange={(event) =>
-                            updateCheck(index, {
-                              auth: { ...check.auth!, password_env: event.target.value },
-                            })
-                          }
-                        />
-                      </label>
-                    </>
-                  )}
-                  <label className="span-2">
-                    <span>Static headers (one Name: Value per line)</span>
-                    <textarea
-                      rows={2}
-                      value={Object.entries(check.headers)
-                        .map(([name, value]) => `${name}: ${value}`)
-                        .join('\n')}
-                      onChange={(event) =>
-                        updateCheck(index, {
-                          headers: parseHeaders(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label className="toggle">
-                    <input
-                      type="checkbox"
-                      checked={check.verify_tls}
-                      onChange={(event) => updateCheck(index, { verify_tls: event.target.checked })}
-                    />
-                    <span>Verify TLS</span>
-                  </label>
-                  <label className="toggle">
-                    <input
-                      type="checkbox"
-                      checked={check.follow_redirects}
-                      onChange={(event) =>
-                        updateCheck(index, { follow_redirects: event.target.checked })
-                      }
-                    />
-                    <span>Follow redirects</span>
-                  </label>
-                </>
-              )}
-              <label>
-                <span>Interval seconds</span>
-                <input
-                  type="number"
-                  placeholder="App default"
-                  value={check.interval_seconds ?? ''}
-                  onChange={(event) =>
-                    updateCheck(index, {
-                      interval_seconds: event.target.value ? Number(event.target.value) : undefined,
-                    })
-                  }
-                />
-              </label>
-              <label>
-                <span>Timeout seconds</span>
-                <input
-                  type="number"
-                  placeholder="App default"
-                  value={check.timeout_seconds ?? ''}
-                  onChange={(event) =>
-                    updateCheck(index, {
-                      timeout_seconds: event.target.value ? Number(event.target.value) : undefined,
-                    })
-                  }
-                />
-              </label>
-              <label className="span-2">
-                <span>Tags (comma separated)</span>
-                <input
-                  value={check.tags.join(', ')}
-                  onChange={(event) =>
-                    updateCheck(index, {
-                      tags: event.target.value
-                        .split(',')
-                        .map((tag) => tag.trim())
-                        .filter(Boolean),
-                    })
-                  }
-                />
-              </label>
-              <label className="toggle span-2">
-                <input
-                  type="checkbox"
-                  checked={check.enabled}
-                  onChange={(event) => updateCheck(index, { enabled: event.target.checked })}
-                />
-                <span>Check enabled</span>
-              </label>
-            </div>
+
+      <div className="editor-block">
+        <div className="section-heading">
+          <div>
+            <h3>
+              <Layers size={14} /> Template
+            </h3>
+            <p>Inherit a reusable set of checks. Edit the template once to update every site.</p>
           </div>
-        ))}
+        </div>
+        <div className="form-grid">
+          <label>
+            <span>Linked template</span>
+            <select
+              aria-label="Linked template"
+              value={draft.template ?? ''}
+              onChange={(event) =>
+                setDraft({ ...draft, template: event.target.value || undefined })
+              }
+            >
+              <option value="">None</option>
+              {templates.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name} ({item.checks.length} checks)
+                </option>
+              ))}
+            </select>
+          </label>
+          {template && (
+            <label>
+              <span>
+                Variables (one key=value per line)
+                {neededVars.length > 0 && <small> · needs {neededVars.join(', ')}</small>}
+              </span>
+              <textarea
+                rows={2}
+                value={varsText(draft.vars)}
+                placeholder={neededVars.map((name) => `${name}=`).join('\n') || 'port=8443'}
+                onChange={(event) => {
+                  const vars = parseVars(event.target.value);
+                  setDraft({ ...draft, vars: Object.keys(vars).length ? vars : undefined });
+                }}
+              />
+            </label>
+          )}
+        </div>
+        {template && (
+          <VariableHelp
+            usages={placeholderUsages(template)}
+            intro="Each variable below is read by the template; give this target its own value for it."
+          />
+        )}
+        {template && (
+          <div className="inherited-list" aria-label="Inherited checks">
+            {inheritedPreview.missing.length > 0 && (
+              <div className="warning-box">
+                Set {inheritedPreview.missing.map((name) => `"${name}"`).join(', ')} above to
+                activate the inherited checks that read{' '}
+                {inheritedPreview.missing.map((name) => `{{vars.${name}}}`).join(', ')}. The target
+                can be saved without them.
+              </div>
+            )}
+            {inheritedPreview.error ? (
+              <div className="error-box">{inheritedPreview.error}</div>
+            ) : (
+              inheritedPreview.checks.map((check) => (
+                <div
+                  key={check.id}
+                  className={`inherited-check ${ownIds.has(check.id) ? 'overridden' : ''}`}
+                >
+                  <span className={`type-pill type-${check.type}`}>{check.type.toUpperCase()}</span>
+                  <strong>{check.name}</strong>
+                  <code>
+                    {check.id}
+                    {check.type === 'http' ? ` · ${check.url}` : ''}
+                    {check.type === 'tcp' ? ` · port ${check.port}` : ''}
+                  </code>
+                  <small>{ownIds.has(check.id) ? 'Overridden by own check' : 'Inherited'}</small>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
+
+      <CheckEditorList
+        checks={draft.checks}
+        idsLocked={Boolean(target && !duplicate)}
+        defaultHost={draft.host || 'example.internal'}
+        minimum={draft.template ? 0 : 1}
+        inherited={inheritedPreview.checks}
+        onChange={(checks) => setDraft({ ...draft, checks })}
+      />
       {errors.length > 0 && (
         <div className="error-box" role="alert">
           <strong>Fix these items</strong>
@@ -470,14 +305,6 @@ export function TargetEditor({
           ))}
         </div>
       )}
-      <div className="modal-actions">
-        <button className="button ghost" onClick={onClose}>
-          Cancel
-        </button>
-        <button className="button primary" disabled={saving} onClick={() => void save()}>
-          {saving ? 'Saving…' : 'Save target'}
-        </button>
-      </div>
     </Modal>
   );
 }

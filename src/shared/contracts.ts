@@ -1,5 +1,7 @@
 import { z } from 'zod';
-import type { AppSettings, CheckConfig, TargetConfig } from '@core/config';
+import type { CapacityAssessment } from '@core/capacity';
+import type { AppSettings, CheckConfig, CheckTemplate, TargetConfig } from '@core/config';
+import type { ImportMapping, ImportRow, ImportRowIssue, PartialTarget } from '@core/import-mapping';
 import type { LiveCheckState, SessionSummary, TimelineResult } from '@core/models';
 
 export type ImportMode = 'replace' | 'add-only';
@@ -15,9 +17,46 @@ export interface ImportPreview {
   matchingTargets: number;
   newChecks: number;
   matchingChecks: number;
+  newTemplates: number;
+  matchingTemplates: number;
   conflicts: ImportConflict[];
   configuration: { applicationVersion: string; exportedAt: string };
 }
+/** A tabular file (CSV, XLSX, JSON list, ...) that needs a column mapping before it can import. */
+export interface TableImportSource {
+  kind: 'table';
+  filePath: string;
+  format: string;
+  columns: string[];
+  rowCount: number;
+  /** First rows, for the mapping preview. */
+  sample: ImportRow[];
+  sheets?: string[];
+  sheet?: string;
+  /** Recognised vendor export the rows were normalised from, e.g. Remote Desktop Manager. */
+  flavour?: 'rdm';
+  /** Opening portion of the file text (absent for workbooks). */
+  rawPreview?: string;
+  suggestedMapping: ImportMapping;
+}
+export interface TableImportOptions {
+  filePath?: string | undefined;
+  /** Pasted delimited text instead of a file. */
+  text?: string | undefined;
+  sheet?: string | undefined;
+  mapping: ImportMapping;
+  mode?: ImportMode | undefined;
+}
+export interface TableImportPreview {
+  targets: TargetConfig[];
+  issues: ImportRowIssue[];
+  /** Rows that import with inherited checks left out until their template variables are set. */
+  partial: PartialTarget[];
+  preview: ImportPreview;
+  /** Capacity assessment for the configuration as it would look after adding these targets. */
+  projectedCapacity: CapacityAssessment;
+}
+export type ImportResult = ImportPreview | TableImportSource | { imported: true };
 export interface DatabaseStats {
   databaseBytes: number;
   walBytes: number;
@@ -66,10 +105,15 @@ export interface PurgePreview {
 export interface AppSnapshot {
   settings: AppSettings;
   targets: TargetConfig[];
+  templates: CheckTemplate[];
+  /** Whether interval, timeout, and concurrency settings can keep up with the check count. */
+  capacity: CapacityAssessment;
   states: LiveCheckState[];
   session: SessionSummary;
   databaseHealthy: boolean;
   pausedAll: boolean;
+  version: string;
+  hasExampleConfiguration: boolean;
   adjacentConfigurationPath?: string;
 }
 export interface SaveCheckInput {
@@ -81,7 +125,12 @@ export interface ExportOptions {
   targetIds?: string[];
 }
 export interface ImportOptions {
+  /** A path previously returned by the file dialog or the adjacent-configuration prompt. */
   filePath?: string;
+  /** Import the example configuration bundled with the application instead of a file. */
+  example?: boolean;
+  /** Pasted delimited text (CSV or TSV) to open in the import builder. */
+  text?: string;
   mode?: ImportMode;
   previewOnly?: boolean;
 }
@@ -113,9 +162,12 @@ export interface OpossumApi {
   saveCheck(input: SaveCheckInput): Promise<void>;
   deleteTarget(targetId: string): Promise<void>;
   deleteCheck(targetId: string, checkId: string): Promise<void>;
-  importConfiguration(
-    options: ImportOptions,
-  ): Promise<ImportPreview | { imported: true } | undefined>;
+  importConfiguration(options: ImportOptions): Promise<ImportResult | undefined>;
+  previewTableImport(options: TableImportOptions): Promise<TableImportPreview>;
+  applyTableImport(options: TableImportOptions): Promise<{ imported: number }>;
+  listTemplates(): Promise<CheckTemplate[]>;
+  saveTemplate(template: CheckTemplate): Promise<{ relinked: number }>;
+  deleteTemplate(templateId: string): Promise<void>;
   exportConfiguration(options: ExportOptions): Promise<string | undefined>;
   getSessions(options?: SessionsOptions): Promise<SessionSummary[]>;
   getTimeline(options: TimelineOptions): Promise<TimelineResult>;
@@ -131,6 +183,7 @@ export interface OpossumApi {
   onStatusChanged(callback: (states: LiveCheckState[]) => void): () => void;
   onConfigurationChanged(callback: () => void): () => void;
   onMaintenanceChanged(callback: (summary: MaintenanceSummary) => void): () => void;
+  onHealthChanged(callback: (healthy: boolean) => void): () => void;
 }
 
 export const idArgumentSchema = z.string().min(1).max(80);

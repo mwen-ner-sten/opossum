@@ -14,6 +14,11 @@ export const IPC = {
   deleteCheck: 'opossum:delete-check',
   importConfiguration: 'opossum:import',
   exportConfiguration: 'opossum:export',
+  previewTableImport: 'opossum:import-table-preview',
+  applyTableImport: 'opossum:import-table-apply',
+  listTemplates: 'opossum:list-templates',
+  saveTemplate: 'opossum:save-template',
+  deleteTemplate: 'opossum:delete-template',
   sessions: 'opossum:sessions',
   timeline: 'opossum:timeline',
   stats: 'opossum:stats',
@@ -28,4 +33,5 @@ export const IPC = {
   statusChanged: 'opossum:event:status',
   configurationChanged: 'opossum:event:configuration',
   maintenanceChanged: 'opossum:event:maintenance',
+  healthChanged: 'opossum:event:health',
 } as const;

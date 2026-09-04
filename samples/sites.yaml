@@ -1,0 +1,21 @@
+# A plain list of sites (not an OPOSSUM configuration: there is no format_version).
+# Nested keys become dotted column names such as network.ip in the import builder.
+sites:
+  - code: chi-bms-01
+    name: Chicago BMS 01
+    network: { ip: 10.20.30.40 }
+    region: Chicago
+    template: ebo-site
+    web_port: 443
+  - code: chi-bms-02
+    name: Chicago BMS 02
+    network: { ip: 10.20.30.41 }
+    region: Chicago
+    template: ebo-site
+    web_port: 8443
+  - code: den-bms-01
+    name: Denver BMS 01
+    network: { ip: 10.20.31.40 }
+    region: Denver
+    template: ebo-site
+    web_port: 443

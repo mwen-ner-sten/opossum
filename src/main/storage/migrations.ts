@@ -121,4 +121,63 @@ export const migrations: Migration[] = [
     changesStoredData: true,
     sql: `ALTER TABLE maintenance_runs ADD COLUMN details_json TEXT;`,
   },
+  {
+    // check_last_state.session_id previously had a plain foreign key, which made it impossible to
+    // delete any closed session that still held a check's latest result. Rebuild the table so the
+    // reference is nullable and clears itself when the session goes away.
+    version: 3,
+    changesStoredData: true,
+    sql: `
+      CREATE TABLE check_last_state_v3 (
+        check_internal_id TEXT PRIMARY KEY REFERENCES checks(internal_id),
+        target_internal_id TEXT NOT NULL REFERENCES targets(internal_id),
+        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+        status TEXT NOT NULL CHECK (status IN ('PASS', 'FAIL')),
+        diagnostic_category TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        duration_ms REAL NOT NULL,
+        details_json TEXT
+      );
+      INSERT INTO check_last_state_v3 SELECT
+        check_internal_id, target_internal_id, session_id, status, diagnostic_category,
+        summary, started_at, completed_at, duration_ms, details_json
+      FROM check_last_state;
+      DROP TABLE check_last_state;
+      ALTER TABLE check_last_state_v3 RENAME TO check_last_state;
+
+      CREATE INDEX idx_intervals_target_time ON status_intervals(target_internal_id, started_at);
+      CREATE INDEX idx_maintenance_ended ON maintenance_runs(ended_at DESC);
+    `,
+  },
+  {
+    // Reusable check templates. Targets link to a template; the checks it generates are stored
+    // in the checks table like any other so history and last-known state keep working.
+    version: 4,
+    changesStoredData: false,
+    sql: `
+      CREATE TABLE templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        checks_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+      );
+      ALTER TABLE targets ADD COLUMN template_id TEXT;
+      ALTER TABLE targets ADD COLUMN vars_json TEXT;
+      ALTER TABLE checks ADD COLUMN template_id TEXT;
+      CREATE INDEX idx_targets_template ON targets(template_id);
+    `,
+  },
+  {
+    version: 5,
+    changesStoredData: false,
+    // Checks are ordered steps; the position keeps template and editor order across restarts.
+    sql: `ALTER TABLE checks ADD COLUMN position INTEGER NOT NULL DEFAULT 0;`,
+  },
 ];
+
+export const LATEST_SCHEMA_VERSION = migrations[migrations.length - 1]!.version;

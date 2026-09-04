@@ -1,22 +1,32 @@
 import { useEffect, useState } from 'react';
 import { Database, ExternalLink, HardDrive, RefreshCw, Trash2, Wrench } from 'lucide-react';
+import type { CapacityAssessment } from '@core/capacity';
 import type { AppSettings, TargetConfig } from '@core/config';
 import type { DatabaseStats, PurgeOptions, PurgePreview } from '@shared/contracts';
+import { CapacityNote } from '../components/CapacityNote';
 import { Modal } from '../components/Modal';
 
 const bytes = (value: number): string =>
   value < 1024 * 1024
     ? `${(value / 1024).toFixed(1)} KiB`
     : `${(value / 1024 / 1024).toFixed(2)} MiB`;
+const describe = (error: unknown): string =>
+  error instanceof Error ? error.message : 'The request could not be completed.';
 
 export function DataView({
   settings: initialSettings,
   targets,
+  capacity,
   onSettingsSaved,
+  onError,
+  onNotice,
 }: {
   settings: AppSettings;
   targets: TargetConfig[];
+  capacity: CapacityAssessment;
   onSettingsSaved(): void;
+  onError(message: string): void;
+  onNotice(message: string): void;
 }) {
   const [settings, setSettings] = useState(initialSettings);
   const [stats, setStats] = useState<DatabaseStats>();
@@ -28,11 +38,15 @@ export function DataView({
     value: PurgePreview;
     title: string;
   }>();
+  const [confirmRemoveDeleted, setConfirmRemoveDeleted] = useState(false);
   const [busy, setBusy] = useState('');
   const load = (): void => {
-    void window.opossum.getDatabaseStats().then(setStats);
+    window.opossum
+      .getDatabaseStats()
+      .then(setStats)
+      .catch((error: unknown) => onError(describe(error)));
   };
-  useEffect(load, []);
+  useEffect(load, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => setSettings(initialSettings), [initialSettings]);
   const selectedTarget = targets.find((target) => target.id === scopeTarget);
   const exceedsConfiguredSize = Boolean(
@@ -40,59 +54,75 @@ export function DataView({
     settings.history_max_database_mb > 0 &&
     stats.totalBytes > settings.history_max_database_mb * 1024 * 1024,
   );
-  const askPurge = async (options: PurgeOptions, title: string): Promise<void> =>
-    setPreview({ options, title, value: await window.opossum.previewHistoryPurge(options) });
-  const executePurge = async (): Promise<void> => {
-    if (!preview) return;
-    setBusy('purge');
+  const run = async (name: string, action: () => Promise<string | void>): Promise<void> => {
+    setBusy(name);
     try {
-      await window.opossum.purgeHistory(preview.options);
+      const message = await action();
+      if (message) onNotice(message);
+      load();
+    } catch (error) {
+      onError(describe(error));
+    } finally {
+      setBusy('');
+    }
+  };
+  const askPurge = (options: PurgeOptions, title: string): Promise<void> =>
+    run('preview', async () => {
+      setPreview({ options, title, value: await window.opossum.previewHistoryPurge(options) });
+    });
+  const executePurge = (): Promise<void> =>
+    run('purge', async () => {
+      if (!preview) return;
+      const summary = await window.opossum.purgeHistory(preview.options);
       setPreview(undefined);
-      load();
-    } finally {
-      setBusy('');
-    }
-  };
-  const optimize = async (fullVacuum: boolean): Promise<void> => {
-    setBusy(fullVacuum ? 'vacuum' : 'optimize');
-    try {
+      return `Removed ${summary.intervalsRemoved} status intervals and ${summary.sessionsRemoved} sessions`;
+    });
+  const optimize = (fullVacuum: boolean): Promise<void> =>
+    run(fullVacuum ? 'vacuum' : 'optimize', async () => {
       await window.opossum.optimizeDatabase({ fullVacuum });
-      load();
-    } finally {
-      setBusy('');
-    }
-  };
-  const removeDeleted = async (): Promise<void> => {
-    if (
-      !window.confirm(
-        'Remove soft-deleted targets and checks that have no remaining history or last-known state?',
-      )
-    )
-      return;
-    setBusy('remove-deleted');
-    try {
+      return fullVacuum ? 'Full vacuum complete' : 'Database optimized';
+    });
+  const removeDeleted = (): Promise<void> =>
+    run('remove-deleted', async () => {
       await window.opossum.removeUnusedDeletedItems();
-      load();
-    } finally {
-      setBusy('');
-    }
-  };
-  const saveSettings = async (): Promise<void> => {
-    setBusy('settings');
-    try {
+      setConfirmRemoveDeleted(false);
+      return 'Unused deleted definitions removed';
+    });
+  const saveSettings = (): Promise<void> =>
+    run('settings', async () => {
       await window.opossum.saveSettings(settings);
       onSettingsSaved();
-    } finally {
-      setBusy('');
-    }
-  };
+      return 'Settings saved';
+    });
+  const numberField = (
+    key: keyof AppSettings,
+    label: string,
+    min: number,
+    hint?: string,
+    max?: number,
+  ) => (
+    <label>
+      <span>{label}</span>
+      <input
+        type="number"
+        min={min}
+        {...(max === undefined ? {} : { max })}
+        value={Number(settings[key])}
+        onChange={(event) => setSettings({ ...settings, [key]: Number(event.target.value) })}
+      />
+      {hint && <small>{hint}</small>}
+    </label>
+  );
   return (
     <div className="workspace padded data-page">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Data & history</p>
-          <h1>Storage and retention</h1>
-          <p>Inspect local storage, bound historical growth, and safely remove old observations.</p>
+          <p className="eyebrow">Settings</p>
+          <h1>Defaults, retention, and storage</h1>
+          <p>
+            Set monitoring defaults, bound how much history is kept, and maintain the local
+            database.
+          </p>
         </div>
         <button className="button secondary" onClick={load}>
           <RefreshCw size={15} /> Refresh
@@ -127,8 +157,8 @@ export function DataView({
           </strong>
           <small>
             {stats?.lastMaintenance
-              ? new Date(stats.lastMaintenance.endedAt).toLocaleString()
-              : 'Maintenance runs at startup and every six hours'}
+              ? `${new Date(stats.lastMaintenance.endedAt).toLocaleString()}${stats.lastMaintenance.error ? ` · failed: ${stats.lastMaintenance.error}` : ''}`
+              : 'Maintenance runs shortly after startup and every six hours'}
           </small>
         </div>
       </div>
@@ -153,66 +183,34 @@ export function DataView({
             {busy === 'settings' ? 'Saving…' : 'Save settings'}
           </button>
         </div>
+        <CapacityNote
+          assessment={capacity}
+          heading="Capacity check"
+          onApply={(patch) => setSettings({ ...settings, ...patch })}
+        />
         <div className="form-grid three">
-          <label>
-            <span>Default interval (seconds)</span>
-            <input
-              type="number"
-              min="1"
-              value={settings.default_interval_seconds}
-              onChange={(event) =>
-                setSettings({ ...settings, default_interval_seconds: Number(event.target.value) })
-              }
-            />
-          </label>
-          <label>
-            <span>Default timeout (seconds)</span>
-            <input
-              type="number"
-              min="1"
-              max="300"
-              value={settings.default_timeout_seconds}
-              onChange={(event) =>
-                setSettings({ ...settings, default_timeout_seconds: Number(event.target.value) })
-              }
-            />
-          </label>
-          <label>
-            <span>Maximum concurrent checks</span>
-            <input
-              type="number"
-              min="1"
-              max="200"
-              value={settings.max_concurrent_checks}
-              onChange={(event) =>
-                setSettings({ ...settings, max_concurrent_checks: Number(event.target.value) })
-              }
-            />
-          </label>
-          <label>
-            <span>History maximum age (days)</span>
-            <input
-              type="number"
-              min="0"
-              value={settings.history_max_age_days}
-              onChange={(event) =>
-                setSettings({ ...settings, history_max_age_days: Number(event.target.value) })
-              }
-            />
-            <small>0 disables age purging</small>
-          </label>
-          <label>
-            <span>Database size guard (MiB)</span>
-            <input
-              type="number"
-              min="0"
-              value={settings.history_max_database_mb}
-              onChange={(event) =>
-                setSettings({ ...settings, history_max_database_mb: Number(event.target.value) })
-              }
-            />
-            <small>0 disables size enforcement</small>
-          </label>
+          {numberField('default_interval_seconds', 'Default interval (seconds)', 1)}
+          {numberField('default_timeout_seconds', 'Default timeout (seconds)', 1, undefined, 300)}
+          {numberField('max_concurrent_checks', 'Maximum concurrent checks', 1, undefined, 200)}
+          {numberField(
+            'failure_backoff_max_seconds',
+            'Failure backoff cap (seconds)',
+            0,
+            'A check that keeps failing doubles its interval up to this; 0 disables backoff',
+            86_400,
+          )}
+          {numberField(
+            'history_max_age_days',
+            'History maximum age (days)',
+            0,
+            '0 disables age purging',
+          )}
+          {numberField(
+            'history_max_database_mb',
+            'Database size guard (MiB)',
+            0,
+            '0 disables size enforcement',
+          )}
           <label className="toggle">
             <input
               type="checkbox"
@@ -227,7 +225,7 @@ export function DataView({
       </section>
       <div className="data-grid">
         <section className="settings-card">
-          <h2>Purge history</h2>
+          <h2>Purge stored history</h2>
           <p>
             Only closed sessions are eligible. Current monitoring and configuration are protected.
           </p>
@@ -309,8 +307,8 @@ export function DataView({
         <section className="settings-card">
           <h2>Database tools</h2>
           <p>
-            Routine optimization is bounded. A full vacuum pauses checks and may need temporary disk
-            space.
+            Routine optimization is bounded. A full vacuum rewrites the database file and may need
+            temporary disk space; checks keep running.
           </p>
           <div className="stack-actions">
             <button
@@ -330,9 +328,9 @@ export function DataView({
             <button
               className="button ghost"
               disabled={Boolean(busy)}
-              onClick={() => void removeDeleted()}
+              onClick={() => setConfirmRemoveDeleted(true)}
             >
-              {busy === 'remove-deleted' ? 'Removing…' : 'Remove deleted items with no history'}
+              Remove deleted items with no history
             </button>
             <button className="button ghost" onClick={() => void window.opossum.openDataFolder()}>
               <ExternalLink size={15} /> Open data folder
@@ -380,6 +378,25 @@ export function DataView({
             onClick={() => void executePurge()}
           >
             {busy === 'purge' ? 'Purging…' : 'Confirm purge'}
+          </button>
+        </div>
+      </Modal>
+      <Modal
+        open={confirmRemoveDeleted}
+        onOpenChange={setConfirmRemoveDeleted}
+        title="Remove unused deleted definitions?"
+        description="Soft-deleted targets and checks that no longer have status history or a last-known result are removed permanently. Anything still referenced by history is kept."
+      >
+        <div className="modal-actions">
+          <button className="button ghost" onClick={() => setConfirmRemoveDeleted(false)}>
+            Cancel
+          </button>
+          <button
+            className="button danger-button"
+            disabled={busy === 'remove-deleted'}
+            onClick={() => void removeDeleted()}
+          >
+            {busy === 'remove-deleted' ? 'Removing…' : 'Remove definitions'}
           </button>
         </div>
       </Modal>

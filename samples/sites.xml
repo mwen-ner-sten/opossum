@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sites>
+  <site code="chi-bms-01" region="Chicago">
+    <name>Chicago BMS 01</name>
+    <host>10.20.30.40</host>
+    <template>ebo-site</template>
+    <web_port>443</web_port>
+  </site>
+  <site code="chi-bms-02" region="Chicago">
+    <name>Chicago BMS 02</name>
+    <host>10.20.30.41</host>
+    <template>ebo-site</template>
+    <web_port>8443</web_port>
+  </site>
+  <site code="den-bms-01" region="Denver">
+    <name>Denver BMS 01</name>
+    <host>10.20.31.40</host>
+    <template>ebo-site</template>
+    <web_port>443</web_port>
+  </site>
+</sites>

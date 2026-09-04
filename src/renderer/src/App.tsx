@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
-  CalendarClock,
   Database,
   Download,
+  FileText,
+  Gauge,
   History,
+  Laptop,
   Moon,
   Pause,
   Play,
@@ -13,21 +15,31 @@ import {
   Sun,
   Upload,
 } from 'lucide-react';
-import type { TargetConfig } from '@core/config';
-import type { AppSnapshot } from '@shared/contracts';
-import type { ImportPreview } from '@shared/contracts';
+import type { CheckTemplate, TargetConfig } from '@core/config';
+import type { AppSnapshot, ImportMode, ImportPreview, TableImportSource } from '@shared/contracts';
 import { Brand } from './components/Brand';
 import { Modal } from './components/Modal';
+import { StatusStrip, type StatusCounts } from './components/StatusStrip';
 import { ConfigurationView } from './features/ConfigurationView';
 import { DataView } from './features/DataView';
 import { HistoryView } from './features/HistoryView';
-import { MonitorView } from './features/MonitorView';
+import { ImportBuilder } from './features/ImportBuilder';
+import { MonitorView } from './features/monitor/MonitorView';
 import { TargetEditor } from './features/TargetEditor';
+import { TemplateEditor } from './features/TemplateEditor';
+import { applyTheme, readStoredTheme, watchSystemTheme, type ThemePreference } from './theme';
 
 type View = 'monitor' | 'history' | 'configuration' | 'data';
+type ImportSource = { kind: 'file'; filePath: string } | { kind: 'example' };
+const NOTICE_MS = 3_500;
 
 function isImportPreview(value: unknown): value is ImportPreview {
   return Boolean(value && typeof value === 'object' && 'newTargets' in value);
+}
+function isTableSource(value: unknown): value is TableImportSource {
+  return Boolean(
+    value && typeof value === 'object' && (value as { kind?: string }).kind === 'table',
+  );
 }
 
 function displayError(error: unknown): string {
@@ -52,12 +64,33 @@ export function App() {
   const [view, setView] = useState<View>('monitor');
   const [editor, setEditor] = useState<{ target?: TargetConfig; duplicate?: boolean }>();
   const [deleting, setDeleting] = useState<TargetConfig>();
-  const [importPreview, setImportPreview] = useState<ImportPreview>();
+  const [importPreview, setImportPreview] = useState<{
+    preview: ImportPreview;
+    source: ImportSource;
+  }>();
   const [adjacentPrompt, setAdjacentPrompt] = useState(false);
+  const [templateEditor, setTemplateEditor] = useState<{ template?: CheckTemplate }>();
+  const [deletingTemplate, setDeletingTemplate] = useState<CheckTemplate>();
+  const [tableImport, setTableImport] = useState<{ source: TableImportSource; text?: string }>();
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [theme, setTheme] = useState(() => localStorage.getItem('theme') ?? 'system');
+  const [theme, setTheme] = useState<ThemePreference>(readStoredTheme);
+  const [statusFilter, setStatusFilter] = useState(
+    () => localStorage.getItem('filter.status') ?? 'all',
+  );
+  useEffect(() => localStorage.setItem('filter.status', statusFilter), [statusFilter]);
+
+  const showNotice = useCallback((message: string) => {
+    setNotice(message);
+    window.setTimeout(
+      () => setNotice((current) => (current === message ? '' : current)),
+      NOTICE_MS,
+    );
+  }, []);
+  const showError = useCallback((message: string) => setError(message), []);
 
   const load = useCallback(async () => {
     try {
@@ -76,21 +109,25 @@ export function App() {
     );
     const offConfig = window.opossum.onConfigurationChanged(() => void load());
     const offMaintenance = window.opossum.onMaintenanceChanged((summary) => {
-      setNotice(`${summary.reason.replaceAll('-', ' ')} completed`);
-      window.setTimeout(() => setNotice(''), 3500);
+      if (summary.error)
+        setError(`${summary.reason.replaceAll('-', ' ')} failed: ${summary.error}`);
+      else showNotice(`${summary.reason.replaceAll('-', ' ')} completed`);
+    });
+    const offHealth = window.opossum.onHealthChanged((healthy) => {
+      setSnapshot((current) => (current ? { ...current, databaseHealthy: healthy } : current));
+      if (!healthy)
+        setError('Database writes are failing. Results are shown live but may not be saved.');
     });
     return () => {
       offStatus();
       offConfig();
       offMaintenance();
+      offHealth();
     };
-  }, [load]);
+  }, [load, showNotice]);
   useEffect(() => {
-    localStorage.setItem('theme', theme);
-    const dark =
-      theme === 'dark' ||
-      (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
-    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    applyTheme(theme);
+    return watchSystemTheme(() => theme);
   }, [theme]);
   useEffect(() => {
     if (
@@ -104,44 +141,77 @@ export function App() {
   }, [snapshot]);
 
   const counts = useMemo(() => {
-    const value = { PASS: 0, FAIL: 0, CHECKING: 0, UNKNOWN: 0, PAUSED: 0 };
+    const value: StatusCounts = { PASS: 0, FAIL: 0, CHECKING: 0, UNKNOWN: 0, PAUSED: 0 };
     snapshot?.states.forEach((state) => {
       value[state.status] += 1;
     });
     return value;
   }, [snapshot?.states]);
-  const importConfig = async (): Promise<void> => {
+
+  const previewImport = async (source?: ImportSource): Promise<void> => {
     setBusy('import');
     setError('');
     try {
-      const result = await window.opossum.importConfiguration({ previewOnly: true });
-      if (isImportPreview(result)) setImportPreview(result);
+      const options =
+        source?.kind === 'example'
+          ? { example: true, previewOnly: true }
+          : source?.kind === 'file'
+            ? { filePath: source.filePath, previewOnly: true }
+            : { previewOnly: true };
+      const result = await window.opossum.importConfiguration(options);
+      if (isImportPreview(result))
+        setImportPreview({
+          preview: result,
+          source: source ?? { kind: 'file', filePath: result.filePath },
+        });
+      else if (isTableSource(result)) setTableImport({ source: result });
     } catch (caught) {
       setError(displayError(caught));
     } finally {
       setBusy('');
     }
   };
-  const previewAdjacent = async (): Promise<void> => {
-    if (!snapshot?.adjacentConfigurationPath) return;
-    setAdjacentPrompt(false);
-    try {
-      const result = await window.opossum.importConfiguration({
-        filePath: snapshot.adjacentConfigurationPath,
-        previewOnly: true,
-      });
-      if (isImportPreview(result)) setImportPreview(result);
-    } catch (caught) {
-      setError(displayError(caught));
-    }
-  };
-  const confirmImport = async (mode: 'replace' | 'add-only'): Promise<void> => {
+  const confirmImport = async (mode: ImportMode): Promise<void> => {
     if (!importPreview) return;
     setBusy('import-confirm');
     try {
-      await window.opossum.importConfiguration({ filePath: importPreview.filePath, mode });
+      const { source } = importPreview;
+      await window.opossum.importConfiguration(
+        source.kind === 'example' ? { example: true, mode } : { filePath: source.filePath, mode },
+      );
       setImportPreview(undefined);
-      setNotice('Configuration imported');
+      showNotice(
+        source.kind === 'example' ? 'Example configuration loaded' : 'Configuration imported',
+      );
+      await load();
+    } catch (caught) {
+      setError(displayError(caught));
+    } finally {
+      setBusy('');
+    }
+  };
+  const openPasted = async (): Promise<void> => {
+    setBusy('import');
+    setError('');
+    try {
+      const result = await window.opossum.importConfiguration({ text: pasteText });
+      if (isTableSource(result)) {
+        setPasteOpen(false);
+        setTableImport({ source: result, text: pasteText });
+      }
+    } catch (caught) {
+      setError(displayError(caught));
+    } finally {
+      setBusy('');
+    }
+  };
+  const deleteTemplate = async (): Promise<void> => {
+    if (!deletingTemplate) return;
+    setBusy('delete-template');
+    try {
+      await window.opossum.deleteTemplate(deletingTemplate.id);
+      setDeletingTemplate(undefined);
+      showNotice('Template deleted');
       await load();
     } catch (caught) {
       setError(displayError(caught));
@@ -153,18 +223,22 @@ export function App() {
     setBusy('export');
     try {
       const path = await window.opossum.exportConfiguration({});
-      if (path) setNotice(`Configuration exported to ${path}`);
+      if (path) showNotice(`Configuration exported to ${path}`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Configuration could not be exported.');
+      setError(displayError(caught));
     } finally {
       setBusy('');
     }
   };
   const toggleAll = async (): Promise<void> => {
     if (!snapshot) return;
-    if (snapshot.pausedAll) await window.opossum.resumeAll();
-    else await window.opossum.pauseAll();
-    setSnapshot({ ...snapshot, pausedAll: !snapshot.pausedAll });
+    try {
+      if (snapshot.pausedAll) await window.opossum.resumeAll();
+      else await window.opossum.pauseAll();
+      setSnapshot({ ...snapshot, pausedAll: !snapshot.pausedAll });
+    } catch (caught) {
+      setError(displayError(caught));
+    }
   };
   const deleteTarget = async (): Promise<void> => {
     if (!deleting) return;
@@ -172,10 +246,10 @@ export function App() {
     try {
       await window.opossum.deleteTarget(deleting.id);
       setDeleting(undefined);
-      setNotice('Target deleted; its history remains available.');
+      showNotice('Target deleted; its history remains available.');
       await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Target could not be deleted.');
+      setError(displayError(caught));
     } finally {
       setBusy('');
     }
@@ -213,62 +287,81 @@ export function App() {
             className={view === 'configuration' ? 'active' : ''}
             onClick={() => setView('configuration')}
           >
-            <Settings size={18} />
-            <span>Configuration</span>
+            <Database size={18} />
+            <span>Targets</span>
           </button>
           <button className={view === 'data' ? 'active' : ''} onClick={() => setView('data')}>
-            <Database size={18} />
-            <span>Data & history</span>
+            <Settings size={18} />
+            <span>Settings</span>
           </button>
         </nav>
         <div className="rail-footer">
-          <div className="theme-switch" aria-label="Theme">
-            <button
-              className={theme === 'light' ? 'active' : ''}
-              onClick={() => setTheme('light')}
-              aria-label="Light theme"
-            >
-              <Sun size={15} />
-            </button>
-            <button
-              className={theme === 'system' ? 'active' : ''}
-              onClick={() => setTheme('system')}
-              aria-label="System theme"
-            >
-              A
-            </button>
-            <button
-              className={theme === 'dark' ? 'active' : ''}
-              onClick={() => setTheme('dark')}
-              aria-label="Dark theme"
-            >
-              <Moon size={15} />
-            </button>
+          <div
+            className={`rail-health ${snapshot.databaseHealthy ? '' : 'unhealthy'}`}
+            role="status"
+          >
+            <span className={`health-dot ${snapshot.databaseHealthy ? '' : 'unhealthy'}`} />
+            <strong>
+              {snapshot.databaseHealthy ? 'Local database healthy' : 'Database writes failing'}
+            </strong>
+            <small>Session since {new Date(snapshot.session.startedAt).toLocaleTimeString()}</small>
           </div>
-          <small>v0.1.0 · MIT</small>
+          <div className="rail-meta">
+            <small>v{snapshot.version} · MIT</small>
+            <div className="theme-switch" aria-label="Theme">
+              <button
+                className={theme === 'light' ? 'active' : ''}
+                onClick={() => setTheme('light')}
+                aria-label="Light theme"
+                title="Light theme"
+              >
+                <Sun size={14} />
+              </button>
+              <button
+                className={theme === 'system' ? 'active' : ''}
+                onClick={() => setTheme('system')}
+                aria-label="System theme"
+                title="Follow system theme"
+              >
+                <Laptop size={14} />
+              </button>
+              <button
+                className={theme === 'dark' ? 'active' : ''}
+                onClick={() => setTheme('dark')}
+                aria-label="Dark theme"
+                title="Dark theme"
+              >
+                <Moon size={14} />
+              </button>
+            </div>
+          </div>
         </div>
       </aside>
       <main className="app-main">
         <header className="topbar">
-          <div className="status-summary" aria-label="Check status counts">
-            {Object.entries(counts).map(([status, count]) => (
-              <div key={status} className={`summary-${status.toLowerCase()}`}>
-                <span>{count}</span>
-                <small>{status.toLowerCase()}</small>
-              </div>
-            ))}
-          </div>
-          <div className="session-health">
-            <span className="health-dot" /> Local database healthy
-            <small>
-              Session started {new Date(snapshot.session.startedAt).toLocaleTimeString()}
-            </small>
-          </div>
+          <StatusStrip
+            counts={counts}
+            activeFilter={view === 'monitor' ? statusFilter : 'all'}
+            onFilter={(status) => {
+              setStatusFilter(status);
+              setView('monitor');
+            }}
+          />
           <div className="top-actions">
+            {snapshot.capacity.level !== 'ok' && (
+              <button
+                className={`capacity-pill ${snapshot.capacity.level}`}
+                title={snapshot.capacity.findings[0]}
+                onClick={() => setView('data')}
+              >
+                <Gauge size={14} />
+                {snapshot.capacity.level === 'critical' ? 'Over capacity' : 'Capacity warning'}
+              </button>
+            )}
             <button
               className="button ghost"
               disabled={busy === 'import'}
-              onClick={() => void importConfig()}
+              onClick={() => void previewImport()}
             >
               <Upload size={15} /> Import
             </button>
@@ -279,6 +372,7 @@ export function App() {
             >
               <Download size={15} /> Export
             </button>
+            <span className="divider" aria-hidden="true" />
             <button className="button secondary" onClick={() => void toggleAll()}>
               {snapshot.pausedAll ? <Play size={15} /> : <Pause size={15} />}{' '}
               {snapshot.pausedAll ? 'Resume all' : 'Pause all'}
@@ -290,69 +384,95 @@ export function App() {
         </header>
         {firstRun ? (
           <section className="first-run">
-            <div className="first-run-art">
-              <Brand compact />
+            <div className="first-copy">
+              <p className="eyebrow">Welcome to OPOSSUM</p>
+              <h1>Know what is reachable, right when you need to.</h1>
+              <p>
+                OPOSSUM checks hosts, TCP ports, and web applications while this window is open. No
+                service, cloud account, or internet connection is required.
+              </p>
+              <div className="first-actions">
+                <button className="button primary large" onClick={() => setEditor({})}>
+                  <Plus size={17} /> Add first target
+                </button>
+                <button className="button secondary large" onClick={() => void previewImport()}>
+                  <Upload size={17} /> Import configuration
+                </button>
+                {snapshot.hasExampleConfiguration && (
+                  <button
+                    className="button ghost large"
+                    onClick={() => void previewImport({ kind: 'example' })}
+                  >
+                    <FileText size={17} /> Load example configuration
+                  </button>
+                )}
+              </div>
+              <div className="first-features">
+                <span>
+                  <b>PING</b> Host reachability with round-trip time
+                </span>
+                <span>
+                  <b>TCP</b> Port accepts connections within the timeout
+                </span>
+                <span>
+                  <b>HTTP</b> Status code, body text, TLS, and redirects
+                </span>
+              </div>
+            </div>
+            <div className="first-art" aria-hidden="true">
               <span className="pulse-ring one" />
               <span className="pulse-ring two" />
-            </div>
-            <p className="eyebrow">Welcome to OPOSSUM</p>
-            <h1>
-              Know what is reachable,
-              <br />
-              right when you need to.
-            </h1>
-            <p>
-              OPOSSUM checks hosts, TCP ports, and web applications while this window is open. No
-              service, cloud account, or internet connection is required.
-            </p>
-            <div className="first-actions">
-              <button className="button primary large" onClick={() => setEditor({})}>
-                <Plus size={17} /> Add first target
-              </button>
-              <button className="button secondary large" onClick={() => void importConfig()}>
-                <Upload size={17} /> Import configuration
-              </button>
-              <button className="button ghost large" onClick={() => setEditor({})}>
-                <CalendarClock size={17} /> Guided setup
-              </button>
-            </div>
-            <div className="first-features">
-              <span>
-                <b>01</b> Reachability
-              </span>
-              <span>
-                <b>02</b> Port access
-              </span>
-              <span>
-                <b>03</b> Web response
-              </span>
+              <span className="pulse-ring three" />
+              <Brand compact />
             </div>
           </section>
         ) : view === 'monitor' ? (
           <MonitorView
             snapshot={snapshot}
+            statusFilter={statusFilter}
+            onStatusFilter={setStatusFilter}
             onEdit={(target) => setEditor({ target })}
             onDuplicate={(target) => setEditor({ target, duplicate: true })}
             onDelete={setDeleting}
+            onNotice={showNotice}
           />
         ) : view === 'history' ? (
-          <HistoryView targets={snapshot.targets} />
+          <HistoryView
+            targets={snapshot.targets}
+            onOpenData={() => setView('data')}
+            onError={showError}
+            onNotice={showNotice}
+          />
         ) : view === 'configuration' ? (
           <ConfigurationView
             targets={snapshot.targets}
+            templates={snapshot.templates}
             onAdd={() => setEditor({})}
             onEdit={(target) => setEditor({ target })}
             onDuplicate={(target) => setEditor({ target, duplicate: true })}
             onDelete={setDeleting}
             onToggle={(target) =>
-              void window.opossum.saveTarget({ ...target, enabled: !target.enabled })
+              void window.opossum
+                .saveTarget({ ...target, enabled: !target.enabled })
+                .catch((caught: unknown) => setError(displayError(caught)))
             }
+            onNewTemplate={() => setTemplateEditor({})}
+            onEditTemplate={(template) => setTemplateEditor({ template })}
+            onDeleteTemplate={setDeletingTemplate}
+            onImport={() => void previewImport()}
+            onPaste={() => {
+              setPasteText('');
+              setPasteOpen(true);
+            }}
           />
         ) : (
           <DataView
             settings={snapshot.settings}
             targets={snapshot.targets}
+            capacity={snapshot.capacity}
             onSettingsSaved={() => void load()}
+            onError={showError}
+            onNotice={showNotice}
           />
         )}
       </main>
@@ -360,9 +480,81 @@ export function App() {
         open={Boolean(editor)}
         target={editor?.target}
         duplicate={editor?.duplicate}
+        templates={snapshot.templates}
         onClose={() => setEditor(undefined)}
         onSaved={() => void load()}
       />
+      <TemplateEditor
+        open={Boolean(templateEditor)}
+        template={templateEditor?.template}
+        linkedCount={
+          snapshot.targets.filter((target) => target.template === templateEditor?.template?.id)
+            .length
+        }
+        onClose={() => setTemplateEditor(undefined)}
+        onSaved={(message) => {
+          showNotice(message);
+          void load();
+        }}
+      />
+      <ImportBuilder
+        source={tableImport?.source}
+        text={tableImport?.text}
+        templates={snapshot.templates}
+        onClose={() => setTableImport(undefined)}
+        onImported={(message) => {
+          showNotice(message);
+          void load();
+        }}
+        onError={showError}
+      />
+      <Modal
+        open={pasteOpen}
+        onOpenChange={setPasteOpen}
+        title="Paste a host list"
+        description="Paste rows copied from a spreadsheet or a CSV. The first line must be column headings such as name, host, group."
+      >
+        <textarea
+          className="paste-area"
+          aria-label="Pasted host list"
+          placeholder={
+            'name,host,group\nChicago BMS,10.20.30.40,Chicago\nDenver BMS,10.20.31.40,Denver'
+          }
+          value={pasteText}
+          onChange={(event) => setPasteText(event.target.value)}
+        />
+        <div className="modal-actions">
+          <button className="button ghost" onClick={() => setPasteOpen(false)}>
+            Cancel
+          </button>
+          <button
+            className="button primary"
+            disabled={!pasteText.trim() || busy === 'import'}
+            onClick={() => void openPasted()}
+          >
+            Open in import builder
+          </button>
+        </div>
+      </Modal>
+      <Modal
+        open={Boolean(deletingTemplate)}
+        onOpenChange={(value) => !value && setDeletingTemplate(undefined)}
+        title={`Delete template ${deletingTemplate?.name ?? ''}?`}
+        description="Templates can only be deleted when no target links to them. Targets that already inherited its checks are unaffected."
+      >
+        <div className="modal-actions">
+          <button className="button ghost" onClick={() => setDeletingTemplate(undefined)}>
+            Cancel
+          </button>
+          <button
+            className="button danger-button"
+            disabled={busy === 'delete-template'}
+            onClick={() => void deleteTemplate()}
+          >
+            {busy === 'delete-template' ? 'Deleting…' : 'Delete template'}
+          </button>
+        </div>
+      </Modal>
       <Modal
         open={adjacentPrompt}
         onOpenChange={setAdjacentPrompt}
@@ -377,7 +569,14 @@ export function App() {
           <button className="button ghost" onClick={() => setAdjacentPrompt(false)}>
             Not now
           </button>
-          <button className="button primary" onClick={() => void previewAdjacent()}>
+          <button
+            className="button primary"
+            onClick={() => {
+              setAdjacentPrompt(false);
+              if (snapshot.adjacentConfigurationPath)
+                void previewImport({ kind: 'file', filePath: snapshot.adjacentConfigurationPath });
+            }}
+          >
             Preview import
           </button>
         </div>
@@ -408,30 +607,52 @@ export function App() {
       <Modal
         open={Boolean(importPreview)}
         onOpenChange={(value) => !value && setImportPreview(undefined)}
-        title="Import configuration"
-        description="Review how this YAML file matches the local database before applying it."
+        title={
+          importPreview?.source.kind === 'example'
+            ? 'Load example configuration'
+            : 'Import configuration'
+        }
+        description={
+          importPreview?.source.kind === 'example'
+            ? 'The bundled example uses documentation addresses; edit the targets afterwards to point at your own hosts.'
+            : 'Review how this YAML file matches the local database before applying it.'
+        }
       >
         <div className="import-grid">
           <div>
-            <strong>{importPreview?.newTargets ?? 0}</strong>
+            <strong>{importPreview?.preview.newTargets ?? 0}</strong>
             <span>new targets</span>
           </div>
           <div>
-            <strong>{importPreview?.matchingTargets ?? 0}</strong>
+            <strong>{importPreview?.preview.matchingTargets ?? 0}</strong>
             <span>matching targets</span>
           </div>
           <div>
-            <strong>{importPreview?.newChecks ?? 0}</strong>
+            <strong>{importPreview?.preview.newChecks ?? 0}</strong>
             <span>new checks</span>
           </div>
           <div>
-            <strong>{importPreview?.matchingChecks ?? 0}</strong>
+            <strong>{importPreview?.preview.matchingChecks ?? 0}</strong>
             <span>matching checks</span>
           </div>
+          {(importPreview?.preview.newTemplates ?? 0) +
+            (importPreview?.preview.matchingTemplates ?? 0) >
+            0 && (
+            <>
+              <div>
+                <strong>{importPreview?.preview.newTemplates ?? 0}</strong>
+                <span>new templates</span>
+              </div>
+              <div>
+                <strong>{importPreview?.preview.matchingTemplates ?? 0}</strong>
+                <span>matching templates</span>
+              </div>
+            </>
+          )}
         </div>
-        {importPreview?.conflicts.length ? (
+        {importPreview?.preview.conflicts.length ? (
           <div className="warning-box">
-            {importPreview.conflicts.map((conflict) => (
+            {importPreview.preview.conflicts.map((conflict) => (
               <div key={`${conflict.kind}-${conflict.targetId}-${conflict.checkId}`}>
                 {conflict.targetId}
                 {conflict.checkId ? ` / ${conflict.checkId}` : ''}: {conflict.reason}
