@@ -1,15 +1,48 @@
 import { z } from 'zod';
 import { dialog, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron';
-import { appSettingsSchema, checkSchema, targetSchema } from '@core/config';
+import { appSettingsSchema, checkSchema, checkTemplateSchema, targetSchema } from '@core/config';
+import { SUPPORTED_EXTENSIONS } from './transfer/sources';
 import { idArgumentSchema, pairArgumentSchema } from '@shared/contracts';
-import { serializeError } from '@shared/errors';
+import { OpossumError, serializeError } from '@shared/errors';
 import { IPC } from '@shared/ipc-channels';
 import { ApplicationService } from './application';
 
 const importOptionsSchema = z.object({
   filePath: z.string().optional(),
+  example: z.boolean().optional(),
+  text: z.string().max(5_000_000).optional(),
   mode: z.enum(['replace', 'add-only']).optional(),
   previewOnly: z.boolean().optional(),
+});
+const columnName = z.string().min(1).max(200);
+const importMappingSchema = z.object({
+  columns: z
+    .object({
+      id: columnName.optional(),
+      name: columnName.optional(),
+      host: columnName.optional(),
+      group: columnName.optional(),
+      description: columnName.optional(),
+      template: columnName.optional(),
+      enabled: columnName.optional(),
+    })
+    .strict(),
+  defaults: z
+    .object({
+      group: z.string().max(100).optional(),
+      template: z.string().max(80).optional(),
+      idPrefix: z.string().max(40).optional(),
+    })
+    .strict(),
+  vars: z.record(z.string().max(40), columnName),
+  varDefaults: z.record(z.string().max(40), z.string().max(500)).optional(),
+});
+const tableImportSchema = z.object({
+  filePath: z.string().optional(),
+  text: z.string().max(5_000_000).optional(),
+  sheet: z.string().max(200).optional(),
+  mapping: importMappingSchema,
+  mode: z.enum(['replace', 'add-only']).optional(),
 });
 const exportOptionsSchema = z.object({ targetIds: z.array(idArgumentSchema).optional() });
 const timelineSchema = z.object({
@@ -20,13 +53,22 @@ const timelineSchema = z.object({
 });
 const purgeSchema = z.object({
   before: z.iso.datetime().optional(),
-  sessionIds: z.array(z.string()).optional(),
+  sessionIds: z.array(z.string().uuid()).max(1_000).optional(),
   targetId: idArgumentSchema.optional(),
   checkId: idArgumentSchema.optional(),
   all: z.boolean().optional(),
   clearLastKnown: z.boolean().optional(),
 });
+const sessionsSchema = z
+  .object({
+    limit: z.number().int().min(1).max(1000).optional(),
+    before: z.iso.datetime().optional(),
+  })
+  .optional();
+
 let allowedRenderer: (() => WebContents | undefined) | undefined;
+/** Only paths the user picked in a dialog (or the adjacent opossum.yaml) may be read for import. */
+const approvedImportPaths = new Set<string>();
 
 function register<T extends z.ZodType>(
   channel: string,
@@ -49,8 +91,11 @@ export function registerIpc(
   dataDirectory: string,
   logsDirectory: string,
   renderer: () => WebContents | undefined,
+  adjacentConfigurationPath?: string,
 ): void {
   allowedRenderer = renderer;
+  if (adjacentConfigurationPath) approvedImportPaths.add(adjacentConfigurationPath);
+
   register(IPC.snapshot, z.undefined(), () => application.getSnapshot());
   register(IPC.runCheck, pairArgumentSchema, ([targetId, checkId]) =>
     application.scheduler.runCheck(targetId, checkId),
@@ -88,18 +133,47 @@ export function registerIpc(
     application.deleteCheck(targetId, checkId),
   );
   register(IPC.importConfiguration, importOptionsSchema, async (options) => {
+    const mode = options.previewOnly ? undefined : options.mode;
+    if (options.example) return application.importExample(mode);
+    if (options.text !== undefined) return application.importFromText(options.text);
     let filePath = options.filePath;
     if (!filePath) {
       const selected = await dialog.showOpenDialog({
-        title: 'Import OPOSSUM configuration',
+        title: 'Import configuration or target list',
         properties: ['openFile'],
-        filters: [{ name: 'YAML configuration', extensions: ['yaml', 'yml'] }],
+        filters: [
+          { name: 'All supported files', extensions: SUPPORTED_EXTENSIONS },
+          { name: 'OPOSSUM configuration', extensions: ['yaml', 'yml', 'json'] },
+          { name: 'Spreadsheets and tables', extensions: ['csv', 'tsv', 'txt', 'xlsx'] },
+          { name: 'Structured data', extensions: ['json', 'xml', 'yaml', 'yml'] },
+        ],
       });
       filePath = selected.filePaths[0];
+      if (filePath) approvedImportPaths.add(filePath);
     }
     if (!filePath) return undefined;
-    return application.importFromFile(filePath, options.previewOnly ? undefined : options.mode);
+    if (!approvedImportPaths.has(filePath))
+      throw new OpossumError(
+        'VALIDATION',
+        'Choose the configuration file through the import dialog.',
+      );
+    return application.importFromFile(filePath, mode);
   });
+  const assertApprovedPath = (filePath: string | undefined): void => {
+    if (filePath && !approvedImportPaths.has(filePath))
+      throw new OpossumError('VALIDATION', 'Choose the file through the import dialog.');
+  };
+  register(IPC.previewTableImport, tableImportSchema, (options) => {
+    assertApprovedPath(options.filePath);
+    return application.previewTableImport(options);
+  });
+  register(IPC.applyTableImport, tableImportSchema, (options) => {
+    assertApprovedPath(options.filePath);
+    return application.applyTableImport(options);
+  });
+  register(IPC.listTemplates, z.undefined(), () => application.listTemplates());
+  register(IPC.saveTemplate, checkTemplateSchema, (template) => application.saveTemplate(template));
+  register(IPC.deleteTemplate, idArgumentSchema, (id) => application.deleteTemplate(id));
   register(IPC.exportConfiguration, exportOptionsSchema, async (options) => {
     const selected = await dialog.showSaveDialog({
       title: 'Export OPOSSUM configuration',
@@ -110,15 +184,8 @@ export function registerIpc(
     application.exportToFile(selected.filePath, options.targetIds);
     return selected.filePath;
   });
-  register(
-    IPC.sessions,
-    z
-      .object({
-        limit: z.number().int().min(1).max(1000).optional(),
-        before: z.string().optional(),
-      })
-      .optional(),
-    (options) => application.repositories.listSessions(options?.limit),
+  register(IPC.sessions, sessionsSchema, (options) =>
+    application.repositories.listSessions(options?.limit, options?.before),
   );
   register(IPC.timeline, timelineSchema, (options) =>
     application.getTimeline(options.targetId, options.checkId, options.range, options.sessionId),
@@ -140,8 +207,9 @@ export function registerIpc(
   register(IPC.openLogs, z.undefined(), () => shell.openPath(logsDirectory));
 
   application.setEventHandlers({
-    status: (states: unknown) => renderer()?.send(IPC.statusChanged, states),
+    status: (states) => renderer()?.send(IPC.statusChanged, states),
     configuration: () => renderer()?.send(IPC.configurationChanged),
-    maintenance: (summary: unknown) => renderer()?.send(IPC.maintenanceChanged, summary),
+    maintenance: (summary) => renderer()?.send(IPC.maintenanceChanged, summary),
+    health: (healthy) => renderer()?.send(IPC.healthChanged, healthy),
   });
 }

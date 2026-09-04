@@ -1,7 +1,8 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import Database from 'better-sqlite3';
-import { migrations } from './migrations';
+import { OpossumError } from '@shared/errors';
+import { LATEST_SCHEMA_VERSION, migrations } from './migrations';
 
 export interface DatabasePaths {
   database: string;
@@ -34,15 +35,35 @@ export class DatabaseService {
   }
 
   private applyMigrations(isNew: boolean): void {
-    let version = this.currentVersion();
+    const version = this.currentVersion();
+    if (version > LATEST_SCHEMA_VERSION) {
+      this.db.close();
+      throw new OpossumError(
+        'DATABASE',
+        `This database uses schema version ${version}, which is newer than this build supports (${LATEST_SCHEMA_VERSION}). Upgrade OPOSSUM or restore a backup.`,
+      );
+    }
     const pending = migrations.filter((migration) => migration.version > version);
+    if (pending.length === 0) return;
     if (!isNew && pending.some((migration) => migration.changesStoredData)) this.createBackup();
-    for (const migration of pending) {
-      this.db.transaction(() => {
-        this.db.exec(migration.sql);
-        this.db.prepare('UPDATE schema_version SET version = ?').run(migration.version);
-      })();
-      version = migration.version;
+    // Table rebuilds require foreign-key enforcement off; the pragma cannot change inside a
+    // transaction, so toggle it around the whole migration run and verify integrity afterwards.
+    this.db.pragma('foreign_keys = OFF');
+    try {
+      for (const migration of pending) {
+        this.db.transaction(() => {
+          this.db.exec(migration.sql);
+          this.db.prepare('UPDATE schema_version SET version = ?').run(migration.version);
+        })();
+      }
+      const violations = this.db.pragma('foreign_key_check') as unknown[];
+      if (violations.length > 0)
+        throw new OpossumError(
+          'DATABASE',
+          `Migration left ${violations.length} foreign-key violation(s); restore the backup in the backups folder.`,
+        );
+    } finally {
+      this.db.pragma('foreign_keys = ON');
     }
   }
 

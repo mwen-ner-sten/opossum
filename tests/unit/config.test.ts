@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isExpectedHttpStatus, portableConfigurationSchema, targetSchema } from '@core/config';
+import {
+  isExpectedHttpStatus,
+  isValidHost,
+  portableConfigurationSchema,
+  targetSchema,
+} from '@core/config';
 
 describe('configuration validation', () => {
   it('applies safe defaults', () => {
@@ -65,6 +70,13 @@ describe('configuration validation', () => {
         ],
       }).success,
     ).toBe(false);
+  });
+
+  it('accepts real hosts and rejects values that ping could read as flags', () => {
+    for (const host of ['localhost', '10.20.30.40', 'pme01.example.internal', '::1', 'fe80::1'])
+      expect(isValidHost(host), host).toBe(true);
+    for (const host of ['-t', '-l 65500', 'bad host', 'a..b', '999.1.1.1', 'host;whoami', ''])
+      expect(isValidHost(host), host).toBe(false);
   });
 
   it('matches scalar, list, and range HTTP statuses', () => {

@@ -82,16 +82,20 @@ export function aggregateTargetTimeline(segments: readonly TimelineSegment[]): T
       rank[current] > rank[worst] ? current : worst,
     );
     const previous = result.at(-1);
+    const observations = active.reduce((sum, item) => sum + item.observationCount, 0);
     if (previous?.status === status && previous.endAt === startAt) {
-      previous.endAt = endAt;
-      previous.observationCount += active.reduce((sum, item) => sum + item.observationCount, 0);
+      result[result.length - 1] = {
+        ...previous,
+        endAt,
+        observationCount: previous.observationCount + observations,
+      };
     } else {
       result.push({
         id: `aggregate-${startAt}-${endAt}`,
         startAt,
         endAt,
         status,
-        observationCount: active.reduce((sum, item) => sum + item.observationCount, 0),
+        observationCount: observations,
         summary:
           status === 'NOT_MONITORING' ? 'OPOSSUM was not monitoring' : `Target status: ${status}`,
       });

@@ -36,6 +36,97 @@ describe('local endpoint checks', () => {
     expect(result.summary).toContain(`TCP ${port} connected`);
   });
 
+  it('classifies TCP failures and honours cancellation', async () => {
+    const base = {
+      target: { id: 'local', name: 'Local', host: '127.0.0.1', enabled: true, checks: [] },
+      settings: { ...DEFAULT_SETTINGS, default_timeout_seconds: 1 },
+    };
+    const closedServer = createNetServer();
+    await new Promise<void>((resolve) => closedServer.listen(0, '127.0.0.1', resolve));
+    const closedPort = (closedServer.address() as { port: number }).port;
+    await new Promise<void>((resolve) => closedServer.close(() => resolve()));
+    const refused = await runTcpCheck({
+      ...base,
+      signal: new AbortController().signal,
+      check: { id: 'tcp', name: 'TCP', type: 'tcp', port: closedPort, enabled: true, tags: [] },
+    });
+    expect(refused).toMatchObject({ status: 'FAIL', category: 'connection_refused' });
+    expect(refused.summary).toBe(`TCP ${closedPort} connection refused`);
+    const dns = await runTcpCheck({
+      ...base,
+      signal: new AbortController().signal,
+      target: { ...base.target, host: 'does-not-exist.invalid' },
+      check: { id: 'tcp', name: 'TCP', type: 'tcp', port: 80, enabled: true, tags: [] },
+    });
+    expect(dns).toMatchObject({ category: 'dns', summary: 'TCP 80 host not found' });
+    const controller = new AbortController();
+    const pending = runTcpCheck({
+      ...base,
+      signal: controller.signal,
+      target: { ...base.target, host: '192.0.2.1' },
+      check: { id: 'tcp', name: 'TCP', type: 'tcp', port: 9, enabled: true, tags: [] },
+    });
+    controller.abort();
+    expect(await pending).toMatchObject({ category: 'canceled' });
+    const wrongType = await runTcpCheck({
+      ...base,
+      signal: new AbortController().signal,
+      check: { id: 'ping', name: 'Ping', type: 'ping', enabled: true, tags: [] },
+    });
+    expect(wrongType.category).toBe('unexpected');
+  });
+
+  it('supports HEAD requests, forbidden text, manual redirects, and disabled TLS verification', async () => {
+    const server = createHttpServer((request, response) => {
+      if (request.url === '/redirect') {
+        response.writeHead(302, { Location: '/' });
+        response.end();
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'text/plain' });
+      response.end(request.method === 'HEAD' ? undefined : 'maintenance mode');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    closers.push(() => new Promise((resolve) => server.close(() => resolve())));
+    const port = (server.address() as { port: number }).port;
+    const base = {
+      target: { id: 'local', name: 'Local', host: '127.0.0.1', enabled: true, checks: [] },
+      settings: DEFAULT_SETTINGS,
+      signal: new AbortController().signal,
+    };
+    const check = {
+      id: 'web',
+      name: 'Web',
+      type: 'http' as const,
+      url: `http://127.0.0.1:${port}/`,
+      method: 'GET' as const,
+      expected_status: '200-399',
+      headers: { 'X-Probe': 'opossum' },
+      verify_tls: false,
+      follow_redirects: true,
+      enabled: true,
+      tags: [],
+    };
+    const head = await runHttpCheck({ ...base, check: { ...check, method: 'HEAD' } });
+    expect(head).toMatchObject({ status: 'PASS', details: { tlsVerificationDisabled: true } });
+    const forbidden = await runHttpCheck({
+      ...base,
+      check: { ...check, not_contains: 'maintenance' },
+    });
+    expect(forbidden).toMatchObject({ status: 'FAIL', category: 'content_forbidden' });
+    const manual = await runHttpCheck({
+      ...base,
+      check: { ...check, url: `http://127.0.0.1:${port}/redirect`, follow_redirects: false },
+    });
+    expect(manual.details?.httpStatus).toBe(302);
+    expect(manual.status).toBe('PASS');
+    const wrongType = await runHttpCheck({
+      ...base,
+      check: { id: 'ping', name: 'Ping', type: 'ping', enabled: true, tags: [] },
+    });
+    expect(wrongType.category).toBe('unexpected');
+  });
+
   it('validates HTTP status and response content without public internet', async () => {
     const server = createHttpServer((_request, response) => {
       response.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -115,6 +206,53 @@ describe('local endpoint checks', () => {
       },
     });
     expect(content).toMatchObject({ status: 'FAIL', category: 'content_missing' });
+  });
+
+  it('distinguishes refused, unresolvable, and unresponsive HTTP endpoints', async () => {
+    const base = {
+      target: { id: 'local', name: 'Local', host: '127.0.0.1', enabled: true, checks: [] },
+      settings: { ...DEFAULT_SETTINGS, default_timeout_seconds: 1 },
+      signal: new AbortController().signal,
+    };
+    const check = (url: string) => ({
+      id: 'web',
+      name: 'Web',
+      type: 'http' as const,
+      url,
+      method: 'GET' as const,
+      expected_status: '200-399',
+      headers: {},
+      verify_tls: true,
+      follow_redirects: true,
+      enabled: true,
+      tags: [],
+    });
+    const closedServer = createNetServer();
+    await new Promise<void>((resolve) => closedServer.listen(0, '127.0.0.1', resolve));
+    const closedPort = (closedServer.address() as { port: number }).port;
+    await new Promise<void>((resolve) => closedServer.close(() => resolve()));
+    const refused = await runHttpCheck({
+      ...base,
+      check: check(`http://127.0.0.1:${closedPort}/`),
+    });
+    expect(refused).toMatchObject({
+      category: 'connection_refused',
+      summary: 'HTTP connection refused',
+    });
+    const dns = await runHttpCheck({ ...base, check: check('http://does-not-exist.invalid/') });
+    expect(dns).toMatchObject({ category: 'dns', summary: 'Host not found' });
+    const silent = createHttpServer(() => undefined);
+    await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve));
+    closers.push(
+      () =>
+        new Promise((resolve) => {
+          silent.closeAllConnections();
+          silent.close(() => resolve());
+        }),
+    );
+    const port = (silent.address() as { port: number }).port;
+    const timeout = await runHttpCheck({ ...base, check: check(`http://127.0.0.1:${port}/`) });
+    expect(timeout).toMatchObject({ category: 'timeout', summary: 'HTTP timed out after 1.0 s' });
   });
 
   it('performs Digest authentication using environment references', async () => {

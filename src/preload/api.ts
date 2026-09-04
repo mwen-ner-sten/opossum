@@ -41,6 +41,11 @@ export const api: OpossumApi = {
   deleteCheck: (targetId, checkId) => invoke(IPC.deleteCheck, [targetId, checkId]),
   importConfiguration: (options) => invoke(IPC.importConfiguration, options),
   exportConfiguration: (options) => invoke(IPC.exportConfiguration, options),
+  previewTableImport: (options) => invoke(IPC.previewTableImport, options),
+  applyTableImport: (options) => invoke(IPC.applyTableImport, options),
+  listTemplates: () => invoke(IPC.listTemplates),
+  saveTemplate: (template) => invoke(IPC.saveTemplate, template),
+  deleteTemplate: (templateId) => invoke(IPC.deleteTemplate, templateId),
   getSessions: (options) => invoke(IPC.sessions, options),
   getTimeline: (options) => invoke(IPC.timeline, options),
   getDatabaseStats: () => invoke(IPC.stats),
@@ -55,4 +60,5 @@ export const api: OpossumApi = {
   onStatusChanged: (callback) => event(IPC.statusChanged, callback),
   onConfigurationChanged: (callback) => event(IPC.configurationChanged, callback),
   onMaintenanceChanged: (callback) => event(IPC.maintenanceChanged, callback),
+  onHealthChanged: (callback) => event(IPC.healthChanged, callback),
 };

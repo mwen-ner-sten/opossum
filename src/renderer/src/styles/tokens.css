@@ -1,0 +1,116 @@
+/* OPOSSUM design tokens — "control room" instrument panel.
+   Warm paper light theme, deep slate dark theme, one petrol accent, and semantic status colours.
+   Status colours are the loudest thing on screen by design; everything else stays quiet. */
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-sans/700.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+:root {
+  color-scheme: light;
+  --font-ui: 'IBM Plex Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Cascadia Mono', Consolas, monospace;
+
+  /* type scale */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 17px;
+  --text-xl: 22px;
+  --text-display: clamp(30px, 3.6vw, 44px);
+
+  /* rhythm */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --row-h: 46px;
+  --rail-w: 224px;
+  --topbar-h: 60px;
+  --detail-w: 400px;
+
+  /* motion */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --fast: 120ms;
+  --normal: 200ms;
+
+  /* palette — light */
+  --bg: #f1efea;
+  --surface: #ffffff;
+  --surface-2: #f8f7f4;
+  --surface-3: #ece9e2;
+  --rail: #15171c;
+  --rail-2: #1e2127;
+  --rail-3: #282c34;
+  --rail-text: #b9c0c9;
+  --rail-text-strong: #f4f6f8;
+  --rail-line: #2a2e36;
+  --text: #1b1d21;
+  --muted: #5d636d;
+  --faint: #8b919b;
+  --line: #e2dfd8;
+  --line-strong: #cbc6bc;
+  --accent: #0b7285;
+  --accent-hover: #095f6f;
+  --accent-soft: #dcf1f4;
+  --accent-text: #ffffff;
+  --pass: #1a8049;
+  --pass-soft: #dcf3e5;
+  --fail: #c9302c;
+  --fail-soft: #fbe3e1;
+  --fail-row: #fdf3f2;
+  --checking: #0b7285;
+  --checking-soft: #dcf1f4;
+  --unknown: #a26a00;
+  --unknown-soft: #fbefd3;
+  --paused: #6f7680;
+  --paused-soft: #eae9e6;
+  --shadow-sm: 0 1px 2px rgb(27 29 33 / 6%);
+  --shadow: 0 12px 32px rgb(27 29 33 / 12%);
+  --shadow-lg: 0 24px 64px rgb(27 29 33 / 22%);
+  --focus: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+
+  font-family: var(--font-ui);
+  font-synthesis: none;
+  background: var(--bg);
+  color: var(--text);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0f1114;
+  --surface: #161a1f;
+  --surface-2: #1b2026;
+  --surface-3: #232930;
+  --rail: #0a0c0f;
+  --rail-2: #14171c;
+  --rail-3: #1e2229;
+  --rail-text: #aab2bc;
+  --rail-text-strong: #f2f4f6;
+  --rail-line: #1f232a;
+  --text: #e7e9ec;
+  --muted: #9aa1ab;
+  --faint: #6a717b;
+  --line: #262b33;
+  --line-strong: #353c46;
+  --accent: #3cb6c9;
+  --accent-hover: #5ccadb;
+  --accent-soft: #123a42;
+  --accent-text: #06171b;
+  --pass: #3fcb82;
+  --pass-soft: #16362a;
+  --fail: #f2645f;
+  --fail-soft: #46211f;
+  --fail-row: #221718;
+  --checking: #3cb6c9;
+  --checking-soft: #123a42;
+  --unknown: #e7ab3d;
+  --unknown-soft: #3f3116;
+  --paused: #8c939d;
+  --paused-soft: #262b31;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow: 0 12px 32px rgb(0 0 0 / 40%);
+  --shadow-lg: 0 24px 64px rgb(0 0 0 / 55%);
+}

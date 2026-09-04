@@ -1,0 +1,6 @@
+Site Name,IP Address,Region,Template,Web Port,Notes
+Chicago BMS 01,10.20.30.40,Chicago,ebo-site,443,Primary EBO server
+Chicago BMS 02,10.20.30.41,Chicago,ebo-site,8443,Secondary EBO server
+Denver BMS 01,10.20.31.40,Denver,ebo-site,443,
+Phoenix BMS 01,10.20.40.40,Phoenix,ebo-site,443,Shares the Denver WAN link
+Tucson Plant Controller,10.20.41.40,Tucson,ebo-site,443,

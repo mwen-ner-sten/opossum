@@ -16,6 +16,7 @@ export type DiagnosticCategory =
   | 'auth'
   | 'executable_missing'
   | 'paused'
+  | 'blocked'
   | 'unknown'
   | 'canceled'
   | 'unexpected';
@@ -40,7 +41,8 @@ export interface LastKnownState {
   targetId: string;
   checkId: string;
   result: CheckResult;
-  sessionId: string;
+  /** Absent when the session that produced the result has since been purged. */
+  sessionId?: string;
 }
 
 export interface LiveCheckState {
@@ -50,6 +52,10 @@ export interface LiveCheckState {
   result?: CheckResult;
   lastKnown?: LastKnownState;
   nextRunAt?: string | undefined;
+  /** Present while failure backoff has stretched the interval; the stretched interval in ms. */
+  backoffMs?: number | undefined;
+  /** When the current PASS/FAIL status was first observed this session. */
+  statusSince?: string | undefined;
   isHistorical: boolean;
 }
 
