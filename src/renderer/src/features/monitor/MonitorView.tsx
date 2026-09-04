@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  CircleAlert,
+  LayoutList,
   Copy,
   Download,
   RotateCw,
@@ -89,6 +93,22 @@ export function MonitorView({
       else next.add(id);
       return next;
     });
+  // Bulk expand/collapse: with hundreds of hosts, per-row clicking is not workable.
+  const viewMenu = useRef<HTMLDetailsElement>(null);
+  const setTargetsCollapsed = (ids: readonly string[], collapse: boolean): void => {
+    setCollapsedTargets((current) => {
+      const next = new Set(current);
+      for (const id of ids)
+        if (collapse) next.add(id);
+        else next.delete(id);
+      return next;
+    });
+    if (viewMenu.current) viewMenu.current.open = false;
+  };
+  const setGroupsCollapsed = (names: readonly string[], collapse: boolean): void => {
+    setCollapsed(collapse ? new Set(names) : new Set());
+    if (viewMenu.current) viewMenu.current.open = false;
+  };
   // "/" focuses search from anywhere on the board, like most operator consoles.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -161,6 +181,8 @@ export function MonitorView({
     onStatusFilter('all');
   };
   const totalChecks = snapshot.targets.reduce((sum, target) => sum + target.checks.length, 0);
+  const groupNames = groups.map(([group]) => group);
+  const allTargetIds = snapshot.targets.map((target) => target.id);
   const visibleChecks = snapshot.targets.reduce(
     (sum, target) => sum + target.checks.filter((check) => visible(target, check)).length,
     0,
@@ -215,6 +237,54 @@ export function MonitorView({
             <option value="tcp">TCP</option>
             <option value="http">HTTP</option>
           </select>
+          <button
+            type="button"
+            className={`button ghost problems-toggle ${statusFilter === 'FAIL' ? 'active' : ''}`}
+            aria-pressed={statusFilter === 'FAIL'}
+            title="Show only failing and blocked checks"
+            onClick={() => onStatusFilter(statusFilter === 'FAIL' ? 'all' : 'FAIL')}
+          >
+            <CircleAlert size={14} /> Problems only
+          </button>
+          <details className="view-menu" ref={viewMenu}>
+            <summary className="button ghost" title="Expand or collapse groups and targets">
+              <LayoutList size={14} /> View
+            </summary>
+            <div className="view-menu-list" role="menu">
+              <button role="menuitem" onClick={() => setGroupsCollapsed(groupNames, false)}>
+                Expand all groups
+              </button>
+              <button role="menuitem" onClick={() => setGroupsCollapsed(groupNames, true)}>
+                Collapse all groups
+              </button>
+              <hr />
+              <button role="menuitem" onClick={() => setTargetsCollapsed(allTargetIds, false)}>
+                Expand all targets
+              </button>
+              <button role="menuitem" onClick={() => setTargetsCollapsed(allTargetIds, true)}>
+                Collapse all targets
+              </button>
+              <hr />
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setGroupsCollapsed(groupNames, false);
+                  setTargetsCollapsed(allTargetIds, false);
+                }}
+              >
+                Expand everything
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setGroupsCollapsed(groupNames, true);
+                  setTargetsCollapsed(allTargetIds, true);
+                }}
+              >
+                Collapse everything
+              </button>
+            </div>
+          </details>
           {filtering ? (
             <button className="button ghost filter-clear" onClick={clearFilters}>
               <X size={14} /> Clear ({visibleChecks} of {totalChecks})
@@ -240,26 +310,46 @@ export function MonitorView({
             if (targetChecks.length === 0) return null;
             const isCollapsed = collapsed.has(group);
             const shownTargets = targets.filter((target) => orderedChecks(target).length > 0);
+            const groupIds = shownTargets.map((target) => target.id);
+            const anyExpanded = groupIds.some((id) => !collapsedTargets.has(id));
             return (
               <section className="target-group" key={group}>
-                <button
-                  className="group-heading"
-                  aria-expanded={!isCollapsed}
-                  onClick={() =>
-                    setCollapsed((current) => {
-                      const next = new Set(current);
-                      if (next.has(group)) next.delete(group);
-                      else next.add(group);
-                      return next;
-                    })
-                  }
-                >
-                  {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
-                  <span>{group}</span>
-                  <small>
-                    {shownTargets.length} target{shownTargets.length === 1 ? '' : 's'} ·{' '}
-                    {summarizeStatuses(countStatuses(groupStates))}
-                  </small>
+                <div className="group-heading">
+                  <button
+                    type="button"
+                    className="group-toggle"
+                    aria-expanded={!isCollapsed}
+                    onClick={() =>
+                      setCollapsed((current) => {
+                        const next = new Set(current);
+                        if (next.has(group)) next.delete(group);
+                        else next.add(group);
+                        return next;
+                      })
+                    }
+                  >
+                    {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                    <span>{group}</span>
+                    <small>
+                      {shownTargets.length} target{shownTargets.length === 1 ? '' : 's'} ·{' '}
+                      {summarizeStatuses(countStatuses(groupStates))}
+                    </small>
+                  </button>
+                  {!isCollapsed && (
+                    <button
+                      type="button"
+                      className="icon-button group-fold"
+                      aria-label={`${anyExpanded ? 'Collapse' : 'Expand'} all targets in ${group}`}
+                      title={
+                        anyExpanded
+                          ? 'Collapse targets in this group'
+                          : 'Expand targets in this group'
+                      }
+                      onClick={() => setTargetsCollapsed(groupIds, anyExpanded)}
+                    >
+                      {anyExpanded ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />}
+                    </button>
+                  )}
                   <span className="group-pips" aria-hidden="true">
                     {PIP_ORDER.flatMap((status) =>
                       targetChecks
@@ -269,7 +359,7 @@ export function MonitorView({
                         )),
                     )}
                   </span>
-                </button>
+                </div>
                 {!isCollapsed &&
                   targets.map((target) => {
                     const checks = orderedChecks(target);
