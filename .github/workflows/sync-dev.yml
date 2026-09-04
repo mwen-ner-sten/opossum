@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 jobs:
@@ -26,11 +26,12 @@ jobs:
             echo "dev already contains main; nothing to sync."
             exit 0
           fi
-          existing=$(gh pr list --base dev --head main --state open --json number --jq '.[0].number')
+          # Never use main itself as the PR head: delete-branch-on-merge would remove it.
+          head=sync/main-into-dev
+          git push --force origin origin/main:refs/heads/$head
+          existing=$(gh pr list --base dev --head "$head" --state open --json number --jq '.[0].number')
           if [ -z "$existing" ]; then
-            gh pr create --base dev --head main \
-              --title "chore: sync main into dev" \
-              --body "Automated back-merge of release commits from \`main\` into \`dev\`."
-            existing=$(gh pr list --base dev --head main --state open --json number --jq '.[0].number')
+            gh pr create --base dev --head "$head"               --title "chore: sync main into dev"               --body "Automated back-merge of release commits from \`main\` into \`dev\`."
+            existing=$(gh pr list --base dev --head "$head" --state open --json number --jq '.[0].number')
           fi
           gh pr merge "$existing" --merge --auto || echo "auto-merge not enabled; merge manually."
