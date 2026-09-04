@@ -18,6 +18,9 @@ export default tseslint.config(
     plugins: { 'react-hooks': reactHooks, 'react-refresh': reactRefresh },
     rules: {
       ...reactHooks.configs.recommended.rules,
+      // react-hooks 7 ships the React Compiler rules. This one flags the "reset local state when
+      // a prop changes" effects the editors and views rely on; those are intentional and cheap.
+      'react-hooks/set-state-in-effect': 'off',
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
       '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: false }],
       '@typescript-eslint/unbound-method': 'off',
