@@ -104,9 +104,7 @@ describe('check dependencies', () => {
     ]);
     expect(forward.map((issue) => issue.checkId)).toEqual(['a', 'b']);
     expect(forward[0]?.message).toMatch(/Step 1 can only wait on earlier steps; "b" is step 2/);
-    expect(
-      validateDependencies([{ id: 'ping' }, { id: 'rdp', depends_on: ['ping'] }]),
-    ).toEqual([]);
+    expect(validateDependencies([{ id: 'ping' }, { id: 'rdp', depends_on: ['ping'] }])).toEqual([]);
     const target = chain();
     target.checks[1]!.depends_on = ['web'];
     expect(targetSchema.safeParse(target).success).toBe(false);

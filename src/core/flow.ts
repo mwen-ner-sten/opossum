@@ -50,9 +50,7 @@ export function layoutFlow(steps: readonly FlowStep[], startLabel: string): Flow
   const waitedOn = new Set<string>();
   for (const step of steps) {
     const precursors = (step.depends_on ?? []).filter((id) => known.has(id) && depth.has(id));
-    const column = precursors.length
-      ? Math.max(...precursors.map((id) => depth.get(id)!)) + 1
-      : 1;
+    const column = precursors.length ? Math.max(...precursors.map((id) => depth.get(id)!)) + 1 : 1;
     depth.set(step.id, column);
     if (precursors.length === 0) edges.push({ from: FLOW_START_ID, to: step.id });
     for (const id of precursors) {

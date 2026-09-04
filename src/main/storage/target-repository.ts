@@ -192,9 +192,16 @@ export class TargetRepository {
         .prepare('SELECT position FROM checks WHERE target_internal_id = ? AND config_id = ?')
         .get(targetInternalId, originalCheckId ?? check.id) as { position: number } | undefined;
       const last = this.db
-        .prepare('SELECT COALESCE(MAX(position), -1) AS last FROM checks WHERE target_internal_id = ?')
+        .prepare(
+          'SELECT COALESCE(MAX(position), -1) AS last FROM checks WHERE target_internal_id = ?',
+        )
         .get(targetInternalId) as { last: number };
-      this.upsertCheck(targetInternalId, check, current?.position ?? last.last + 1, originalCheckId);
+      this.upsertCheck(
+        targetInternalId,
+        check,
+        current?.position ?? last.last + 1,
+        originalCheckId,
+      );
     })();
   }
 

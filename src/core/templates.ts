@@ -72,7 +72,8 @@ export function placeholderUsages(template: Pick<CheckTemplate, 'checks'>): Plac
           field: path.join('.'),
           value,
         });
-    } else if (Array.isArray(value)) value.forEach((item, index) => visit(check, item, [...path, String(index)]));
+    } else if (Array.isArray(value))
+      value.forEach((item, index) => visit(check, item, [...path, String(index)]));
     else if (value && typeof value === 'object')
       for (const [key, item] of Object.entries(value)) visit(check, item, [...path, key]);
   };
