@@ -117,9 +117,12 @@ export function DataView({
     <div className="workspace padded data-page">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Data & history</p>
-          <h1>Storage and retention</h1>
-          <p>Inspect local storage, bound historical growth, and safely remove old observations.</p>
+          <p className="eyebrow">Settings</p>
+          <h1>Defaults, retention, and storage</h1>
+          <p>
+            Set monitoring defaults, bound how much history is kept, and maintain the local
+            database.
+          </p>
         </div>
         <button className="button secondary" onClick={load}>
           <RefreshCw size={15} /> Refresh
@@ -222,7 +225,7 @@ export function DataView({
       </section>
       <div className="data-grid">
         <section className="settings-card">
-          <h2>Purge history</h2>
+          <h2>Purge stored history</h2>
           <p>
             Only closed sessions are eligible. Current monitoring and configuration are protected.
           </p>

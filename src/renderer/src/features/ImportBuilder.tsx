@@ -280,7 +280,7 @@ export function ImportBuilder({
               </div>
               {templates.length === 0 && (
                 <div className="warning-box">
-                  No templates exist yet. Create one under Configuration so imported rows have
+                  No templates exist yet. Create one under Targets so imported rows have
                   checks.
                 </div>
               )}
@@ -528,7 +528,7 @@ export function ImportBuilder({
                 {[...new Set(preview.partial.flatMap((item) => item.missing))]
                   .map((name) => `"${name}"`)
                   .join(', ')}{' '}
-                stay inactive until you set the variable on each target (Configuration → Edit).
+                stay inactive until you set the variable on each target (Targets → Edit).
               </div>
             )}
             {preview.issues.length > 0 && (

@@ -119,7 +119,7 @@ test('keyboard navigation reaches primary workspaces', async () => {
   await historyButton.click();
   await expect(window.getByRole('heading', { name: 'Monitoring sessions' })).toBeVisible();
   await window.getByRole('button', { name: /Retention settings/ }).click();
-  await expect(window.getByRole('heading', { name: 'Storage and retention' })).toBeVisible();
+  await expect(window.getByRole('heading', { name: 'Defaults, retention, and storage' })).toBeVisible();
 });
 
 test('templates drive linked targets and the import builder creates sites from pasted rows', async () => {
@@ -128,7 +128,7 @@ test('templates drive linked targets and the import builder creates sites from p
   await window.getByRole('button', { name: /Replace active configuration/ }).click();
   await expect(window.getByText('Denver BMS Server 01').first()).toBeVisible();
 
-  await window.getByRole('button', { name: 'Configuration', exact: true }).click();
+  await window.getByRole('button', { name: 'Targets', exact: true }).click();
   await expect(window.getByText('2 linked targets')).toBeVisible();
   await expect(window.getByText('From template', { exact: false }).first()).toBeVisible();
 

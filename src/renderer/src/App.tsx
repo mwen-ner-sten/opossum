@@ -287,12 +287,12 @@ export function App() {
             className={view === 'configuration' ? 'active' : ''}
             onClick={() => setView('configuration')}
           >
-            <Settings size={18} />
-            <span>Configuration</span>
+            <Database size={18} />
+            <span>Targets</span>
           </button>
           <button className={view === 'data' ? 'active' : ''} onClick={() => setView('data')}>
-            <Database size={18} />
-            <span>Data & history</span>
+            <Settings size={18} />
+            <span>Settings</span>
           </button>
         </nav>
         <div className="rail-footer">

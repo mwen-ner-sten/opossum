@@ -50,7 +50,7 @@ export function ConfigurationView({
     <div className="workspace padded">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Configuration</p>
+          <p className="eyebrow">Targets</p>
           <h1>Targets, templates, and imports</h1>
           <p>Active configuration is stored locally and changes begin monitoring immediately.</p>
         </div>
