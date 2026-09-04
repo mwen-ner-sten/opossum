@@ -9,15 +9,23 @@ export function CheckFields({
   check,
   idLocked,
   placeholders = false,
+  siblings = [],
   onChange,
   onRetype,
 }: {
   check: EditableCheck;
   idLocked: boolean;
   placeholders?: boolean;
+  /** Other checks on the same target or template that this one may depend on. */
+  siblings?: Array<{ id: string; name: string }>;
   onChange(update: Partial<EditableCheck>): void;
   onRetype(type: EditableCheck['type']): void;
 }) {
+  const dependsOn = check.depends_on ?? [];
+  const toggleDependency = (id: string, on: boolean): void => {
+    const next = on ? [...dependsOn, id] : dependsOn.filter((item) => item !== id);
+    onChange({ depends_on: next.length ? next : undefined });
+  };
   const update = (value: Partial<EditableCheck>): void => onChange(value);
   return (
     <div className="form-grid compact">
@@ -237,6 +245,26 @@ export function CheckFields({
           }
         />
       </label>
+      {siblings.length > 0 && (
+        <fieldset className="depends-on span-2">
+          <legend>
+            Runs only after these pass
+            <small> · a failing precursor records this check as blocked without running it</small>
+          </legend>
+          {siblings.map((sibling) => (
+            <label key={sibling.id} className="toggle">
+              <input
+                type="checkbox"
+                checked={dependsOn.includes(sibling.id)}
+                onChange={(event) => toggleDependency(sibling.id, event.target.checked)}
+              />
+              <span>
+                {sibling.name} <code>{sibling.id}</code>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
       <label className="toggle span-2">
         <input
           type="checkbox"

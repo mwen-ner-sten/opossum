@@ -2,12 +2,14 @@ format_version: 1
 exported_at: 2026-09-03T00:00:00Z
 application_version: 0.1.0
 app:
-  default_interval_seconds: 30
+  default_interval_seconds: 60
   default_timeout_seconds: 5
   max_concurrent_checks: 20
   history_max_age_days: 180
   history_max_database_mb: 250
   maintenance_on_startup: true
+  # A check that keeps failing doubles its interval up to this cap; 0 disables backoff.
+  failure_backoff_max_seconds: 600
 # Templates are reusable check sets. Targets that set `template:` inherit every check with
 # {{host}}, {{name}}, {{id}}, {{group}}, and {{vars.<key>}} substituted per target.
 templates:
@@ -26,11 +28,14 @@ templates:
         port: 3389
         enabled: true
         failures_before_fail: 2
+        # Precursors: when host-ping fails this check is recorded as blocked, not attempted.
+        depends_on: [host-ping]
         tags: [remote-access]
       - id: ebo-web
         name: EBO WebStation
         type: http
         url: https://{{host}}:{{vars.web_port}}/
+        depends_on: [host-ping]
         method: GET
         expected_status: [200, 401]
         verify_tls: false

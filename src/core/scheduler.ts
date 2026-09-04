@@ -34,6 +34,8 @@ interface Entry {
   pausedByUser: boolean;
   consecutiveFailures: number;
   lastStartedAt?: number | undefined;
+  /** Set while a run is deferred until every precursor has produced a result this session. */
+  waitingOnDependencies: boolean;
 }
 
 const keyFor = (targetId: string, checkId: string): string => `${targetId}\0${checkId}`;
@@ -118,6 +120,7 @@ export class Scheduler {
       manualQueued: false,
       pausedByUser: false,
       consecutiveFailures: 0,
+      waitingOnDependencies: false,
       state: {
         targetId: target.id,
         checkId: check.id,
@@ -232,11 +235,76 @@ export class Scheduler {
     ]);
   }
 
-  /** Delay until the next run measured from when the last run started, so intervals do not drift. */
+  /**
+   * Delay until the next run measured from when the last run started, so intervals do not drift.
+   * A check that keeps failing past its threshold doubles its interval per extra failure, up to
+   * `failure_backoff_max_seconds`, so a dead site is not hammered every interval.
+   */
   private nextDelay(entry: Entry): number {
-    const intervalMs = effectiveInterval(entry.check, this.settings) * 1_000;
+    const baseMs = effectiveInterval(entry.check, this.settings) * 1_000;
+    const intervalMs = Math.max(baseMs, this.backoffMs(entry, baseMs));
     if (entry.lastStartedAt === undefined) return intervalMs;
     return Math.max(0, entry.lastStartedAt + intervalMs - Date.now());
+  }
+
+  private backoffMs(entry: Entry, baseMs: number): number {
+    const capMs = this.settings.failure_backoff_max_seconds * 1_000;
+    if (capMs <= 0 || entry.state.status !== 'FAIL') return 0;
+    const extra = entry.consecutiveFailures - effectiveFailureThreshold(entry.check);
+    if (extra <= 0) return 0;
+    return Math.min(capMs, baseMs * 2 ** Math.min(extra, 16));
+  }
+
+  /** Current backoff for the UI: milliseconds beyond the normal interval, or undefined. */
+  private backoffState(entry: Entry): number | undefined {
+    const baseMs = effectiveInterval(entry.check, this.settings) * 1_000;
+    const backoff = this.backoffMs(entry, baseMs);
+    return backoff > baseMs ? backoff : undefined;
+  }
+
+  private entriesOf(targetId: string): Entry[] {
+    return [...this.entries.values()].filter((entry) => entry.target.id === targetId);
+  }
+
+  /**
+   * Looks at the precursors named in `depends_on`. Returns the first one that currently fails
+   * (this check is blocked), 'wait' when a precursor has not produced a result yet this session,
+   * or undefined when the check may run. Paused precursors never block.
+   */
+  private dependencyGate(entry: Entry): Entry | 'wait' | undefined {
+    for (const dependencyId of entry.check.depends_on ?? []) {
+      const precursor = this.entries.get(keyFor(entry.target.id, dependencyId));
+      if (!precursor || precursor.state.status === 'PAUSED') continue;
+      if (precursor.state.status === 'FAIL') return precursor;
+      if (precursor.state.status !== 'PASS') return 'wait';
+    }
+    return undefined;
+  }
+
+  /** Re-queues checks that were waiting on, or blocked by, the given precursor. */
+  private releaseDependents(precursor: Entry): void {
+    for (const entry of this.entriesOf(precursor.target.id)) {
+      if (!entry.check.depends_on?.includes(precursor.check.id)) continue;
+      if (entry.running || entry.state.status === 'PAUSED') continue;
+      const wasBlocked = entry.state.result?.category === 'blocked';
+      if (entry.waitingOnDependencies || (wasBlocked && precursor.state.status === 'PASS')) {
+        entry.waitingOnDependencies = false;
+        if (entry.timer) clearTimeout(entry.timer);
+        this.enqueue(entry);
+      }
+    }
+  }
+
+  private blockedResult(precursor: Entry): CheckResult {
+    const at = new Date().toISOString();
+    return {
+      status: 'FAIL',
+      category: 'blocked',
+      summary: `Blocked: ${precursor.check.name} is failing (${precursor.state.result?.summary ?? 'no result'})`,
+      startedAt: at,
+      completedAt: at,
+      durationMs: 0,
+    };
   }
 
   private schedule(entry: Entry, delayMs: number): void {
@@ -272,12 +340,23 @@ export class Scheduler {
 
   private async execute(entry: Entry): Promise<void> {
     if (this.stopped || entry.state.status === 'PAUSED') return;
+    const gate = this.dependencyGate(entry);
+    if (gate === 'wait') {
+      // The precursor is still checking or has never run; it will release this check when done.
+      entry.waitingOnDependencies = true;
+      entry.state = { ...entry.state, nextRunAt: undefined };
+      this.publish();
+      return;
+    }
+    entry.waitingOnDependencies = false;
     entry.running = true;
     entry.controller = new AbortController();
     entry.lastStartedAt = Date.now();
     entry.state = { ...entry.state, status: 'CHECKING', nextRunAt: undefined };
     this.publish();
-    const result = await this.runSafely(entry, entry.controller.signal);
+    const result = gate
+      ? this.blockedResult(gate)
+      : await this.runSafely(entry, entry.controller.signal);
     entry.running = false;
     entry.controller = undefined;
 
@@ -306,6 +385,8 @@ export class Scheduler {
     if (paused) this.recordPaused(entry);
     else if (softFail) this.schedule(entry, Math.min(this.softFailRetryMs, this.nextDelay(entry)));
     else this.schedule(entry, rerun ? 0 : this.nextDelay(entry));
+    entry.state = { ...entry.state, backoffMs: this.backoffState(entry) };
+    this.releaseDependents(entry);
     this.publish();
   }
 

@@ -24,12 +24,17 @@ export function isValidHost(host: string): boolean {
 }
 
 export const appSettingsSchema = z.object({
-  default_interval_seconds: positiveSeconds.default(30),
+  default_interval_seconds: positiveSeconds.default(60),
   default_timeout_seconds: positiveSeconds.max(300).default(5),
   max_concurrent_checks: z.number().int().min(1).max(200).default(20),
   history_max_age_days: z.number().int().min(0).max(3650).default(180),
   history_max_database_mb: z.number().int().min(0).max(102_400).default(250),
   maintenance_on_startup: z.boolean().default(true),
+  /**
+   * Longest gap between runs of a check that keeps failing. Each further failure doubles the
+   * interval up to this cap; 0 disables backoff so failing checks keep their normal interval.
+   */
+  failure_backoff_max_seconds: z.number().int().min(0).max(86_400).default(600),
 });
 
 const commonCheckFields = {
@@ -41,6 +46,11 @@ const commonCheckFields = {
   /** Consecutive failures required before a check transitions to FAIL. Defaults to 1. */
   failures_before_fail: z.number().int().min(1).max(10).optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(30).default([]),
+  /**
+   * IDs of checks on the same target that must currently PASS before this one runs. When a
+   * precursor fails, this check records a "blocked" failure without touching the network.
+   */
+  depends_on: z.array(idSchema).max(10).optional(),
   /** Set on checks generated from a linked template; such checks are read-only on the target. */
   from_template: idSchema.optional(),
 };
@@ -146,6 +156,62 @@ function uniqueCheckIds(checks: Array<{ id: string }>, context: z.RefinementCtx)
   });
 }
 
+export interface DependencyIssue {
+  checkId: string;
+  message: string;
+}
+
+/**
+ * Verifies that every `depends_on` entry names another check in the same set and that the
+ * dependency graph has no cycles. Returns an empty list when the set is valid.
+ */
+export function validateDependencies(
+  checks: ReadonlyArray<{ id: string; depends_on?: string[] | undefined }>,
+): DependencyIssue[] {
+  const issues: DependencyIssue[] = [];
+  const byId = new Map(checks.map((check) => [check.id, check]));
+  for (const check of checks) {
+    for (const dependency of check.depends_on ?? []) {
+      if (dependency === check.id)
+        issues.push({ checkId: check.id, message: 'A check cannot depend on itself' });
+      else if (!byId.has(dependency))
+        issues.push({ checkId: check.id, message: `Depends on unknown check "${dependency}"` });
+    }
+  }
+  if (issues.length) return issues;
+  const state = new Map<string, 'visiting' | 'done'>();
+  const visit = (id: string, trail: string[]): void => {
+    const mark = state.get(id);
+    if (mark === 'done') return;
+    if (mark === 'visiting') {
+      issues.push({
+        checkId: id,
+        message: `Dependency cycle: ${[...trail, id].join(' → ')}`,
+      });
+      return;
+    }
+    state.set(id, 'visiting');
+    for (const dependency of byId.get(id)?.depends_on ?? []) visit(dependency, [...trail, id]);
+    state.set(id, 'done');
+  };
+  for (const check of checks) visit(check.id, []);
+  return issues;
+}
+
+function dependencyIssues(
+  checks: ReadonlyArray<{ id: string; depends_on?: string[] | undefined }>,
+  context: z.RefinementCtx,
+): void {
+  for (const issue of validateDependencies(checks)) {
+    const index = checks.findIndex((check) => check.id === issue.checkId);
+    context.addIssue({
+      code: 'custom',
+      path: ['checks', index, 'depends_on'],
+      message: issue.message,
+    });
+  }
+}
+
 /**
  * A reusable set of checks. Targets that link to a template inherit every check in it with
  * `{{host}}`, `{{name}}`, `{{id}}`, `{{group}}`, and `{{vars.<key>}}` substituted per target.
@@ -158,7 +224,10 @@ export const checkTemplateSchema = z
     checks: z.array(templateCheckSchema).min(1),
   })
   .strict()
-  .superRefine((template, context) => uniqueCheckIds(template.checks, context));
+  .superRefine((template, context) => {
+    uniqueCheckIds(template.checks, context);
+    dependencyIssues(template.checks, context);
+  });
 
 const varsSchema = z
   .record(
@@ -184,6 +253,9 @@ export const targetSchema = z
   .strict()
   .superRefine((target, context) => {
     uniqueCheckIds(target.checks, context);
+    // With a template linked, dependencies may point at inherited checks; storage validates
+    // the combined set after expansion.
+    if (!target.template) dependencyIssues(target.checks, context);
     if (target.checks.length === 0 && !target.template)
       context.addIssue({
         code: 'custom',

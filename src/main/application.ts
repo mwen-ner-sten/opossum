@@ -1,7 +1,8 @@
 import { writeFileSync } from 'node:fs';
 import type { AppSettings, CheckTemplate, PortableConfiguration, TargetConfig } from '@core/config';
+import { assessCapacity } from '@core/capacity';
 import { autoDetectMapping, buildTargetsFromRows } from '@core/import-mapping';
-import { validateTemplate } from '@core/templates';
+import { resolveChecks, validateTemplate } from '@core/templates';
 import { Scheduler } from '@core/scheduler';
 import { addOfflineGaps, aggregateTargetTimeline, observedAvailability } from '@core/timeline';
 import type { LiveCheckState, SessionSummary, TimelineResult } from '@core/models';
@@ -164,6 +165,7 @@ export class ApplicationService {
       settings: this.repositories.getSettings(),
       targets: this.repositories.listTargets(),
       templates: this.repositories.listTemplates(),
+      capacity: assessCapacity(this.repositories.getSettings(), this.repositories.listTargets()),
       states: this.scheduler.getStates(),
       session: this.session,
       databaseHealthy: this.databaseHealthy,
@@ -247,6 +249,7 @@ export class ApplicationService {
       sample: source.rows.slice(0, 25),
       ...(source.sheets ? { sheets: source.sheets } : {}),
       ...(source.sheet ? { sheet: source.sheet } : {}),
+      ...(source.flavour ? { flavour: source.flavour } : {}),
       suggestedMapping: autoDetectMapping(source.columns),
     };
   }
@@ -270,6 +273,21 @@ export class ApplicationService {
     const source = await this.loadTable(options);
     const templates = this.repositories.listTemplates();
     const { targets, issues } = buildTargetsFromRows(source.rows, options.mapping, templates);
+    const settings = this.repositories.getSettings();
+    const existing = this.repositories.listTargets();
+    const incomingIds = new Set(targets.map((target) => target.id));
+    const templateById = new Map(templates.map((template) => [template.id, template]));
+    // Expand inherited checks so the projection counts what the scheduler would actually run.
+    const projected = [
+      ...existing.filter((target) => !incomingIds.has(target.id)),
+      ...targets.map((target) => ({
+        ...target,
+        checks: target.template
+          ? resolveChecks(target, templateById.get(target.template))
+          : target.checks,
+      })),
+    ];
+    const projectedCapacity = assessCapacity(settings, projected);
     const preview = previewImport(
       options.filePath ?? 'pasted text',
       {
@@ -284,7 +302,7 @@ export class ApplicationService {
       this.repositories.listTargets(true),
       templates,
     );
-    return { targets, issues, preview };
+    return { targets, issues, preview, projectedCapacity };
   }
 
   async applyTableImport(options: TableImportOptions): Promise<{ imported: number }> {

@@ -47,12 +47,20 @@ const FIELD_PATTERNS: Array<[MappedField, RegExp]> = [
   ['enabled', /^(enabled|active|monitor(ed)?)$/i],
 ];
 
-/** Guesses which columns hold which target fields; every unmatched column becomes a variable. */
+/** The last dotted segment of a flattened column name, e.g. `Terminal.Host` → `Host`. */
+const leaf = (column: string): string => column.trim().split('.').pop() ?? column;
+
+/**
+ * Guesses which columns hold which target fields; every unmatched column becomes a variable.
+ * Whole-name matches win over matches on the last segment of a nested (dotted) name.
+ */
 export function autoDetectMapping(columns: string[]): ImportMapping {
   const mapping: ImportMapping = { columns: {}, defaults: {}, vars: {} };
   const used = new Set<string>();
   for (const [field, pattern] of FIELD_PATTERNS) {
-    const column = columns.find((name) => !used.has(name) && pattern.test(name.trim()));
+    const column =
+      columns.find((name) => !used.has(name) && pattern.test(name.trim())) ??
+      columns.find((name) => !used.has(name) && pattern.test(leaf(name)));
     if (column) {
       mapping.columns[field] = column;
       used.add(column);

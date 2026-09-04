@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { CapacityAssessment } from '@core/capacity';
 import type { AppSettings, CheckConfig, CheckTemplate, TargetConfig } from '@core/config';
 import type { ImportMapping, ImportRow, ImportRowIssue } from '@core/import-mapping';
 import type { LiveCheckState, SessionSummary, TimelineResult } from '@core/models';
@@ -32,6 +33,8 @@ export interface TableImportSource {
   sample: ImportRow[];
   sheets?: string[];
   sheet?: string;
+  /** Recognised vendor export the rows were normalised from, e.g. Remote Desktop Manager. */
+  flavour?: 'rdm';
   suggestedMapping: ImportMapping;
 }
 export interface TableImportOptions {
@@ -46,6 +49,8 @@ export interface TableImportPreview {
   targets: TargetConfig[];
   issues: ImportRowIssue[];
   preview: ImportPreview;
+  /** Capacity assessment for the configuration as it would look after adding these targets. */
+  projectedCapacity: CapacityAssessment;
 }
 export type ImportResult = ImportPreview | TableImportSource | { imported: true };
 export interface DatabaseStats {
@@ -97,6 +102,8 @@ export interface AppSnapshot {
   settings: AppSettings;
   targets: TargetConfig[];
   templates: CheckTemplate[];
+  /** Whether interval, timeout, and concurrency settings can keep up with the check count. */
+  capacity: CapacityAssessment;
   states: LiveCheckState[];
   session: SessionSummary;
   databaseHealthy: boolean;

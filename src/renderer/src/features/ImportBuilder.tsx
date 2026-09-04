@@ -3,6 +3,7 @@ import { ArrowRight, Table2 } from 'lucide-react';
 import type { CheckTemplate } from '@core/config';
 import { MAPPED_FIELDS, type ImportMapping, type MappedField } from '@core/import-mapping';
 import type { ImportMode, TableImportPreview, TableImportSource } from '@shared/contracts';
+import { CapacityNote } from '../components/CapacityNote';
 import { Modal } from '../components/Modal';
 
 const FIELD_LABELS: Record<MappedField, string> = {
@@ -364,6 +365,11 @@ export function ImportBuilder({
                 {preview.issues.length > 12 && <div>…and {preview.issues.length - 12} more</div>}
               </div>
             )}
+            <CapacityNote
+              assessment={preview.projectedCapacity}
+              heading="After this import"
+              compact
+            />
             {preview.preview.conflicts.length > 0 && (
               <div className="warning-box">
                 {preview.preview.conflicts.map((conflict) => (

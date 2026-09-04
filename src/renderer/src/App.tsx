@@ -4,6 +4,7 @@ import {
   Database,
   Download,
   FileText,
+  Gauge,
   History,
   Laptop,
   Moon,
@@ -347,6 +348,16 @@ export function App() {
             }}
           />
           <div className="top-actions">
+            {snapshot.capacity.level !== 'ok' && (
+              <button
+                className={`capacity-pill ${snapshot.capacity.level}`}
+                title={snapshot.capacity.findings[0]}
+                onClick={() => setView('data')}
+              >
+                <Gauge size={14} />
+                {snapshot.capacity.level === 'critical' ? 'Over capacity' : 'Capacity warning'}
+              </button>
+            )}
             <button
               className="button ghost"
               disabled={busy === 'import'}
@@ -458,6 +469,7 @@ export function App() {
           <DataView
             settings={snapshot.settings}
             targets={snapshot.targets}
+            capacity={snapshot.capacity}
             onSettingsSaved={() => void load()}
             onError={showError}
             onNotice={showNotice}

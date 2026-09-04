@@ -268,6 +268,7 @@ export function TargetEditor({
         idsLocked={Boolean(target && !duplicate)}
         defaultHost={draft.host || 'example.internal'}
         minimum={draft.template ? 0 : 1}
+        inherited={inheritedPreview.checks.map((check) => ({ id: check.id, name: check.name }))}
         onChange={(checks) => setDraft({ ...draft, checks })}
       />
       {errors.length > 0 && (

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Database, ExternalLink, HardDrive, RefreshCw, Trash2, Wrench } from 'lucide-react';
+import type { CapacityAssessment } from '@core/capacity';
 import type { AppSettings, TargetConfig } from '@core/config';
 import type { DatabaseStats, PurgeOptions, PurgePreview } from '@shared/contracts';
+import { CapacityNote } from '../components/CapacityNote';
 import { Modal } from '../components/Modal';
 
 const bytes = (value: number): string =>
@@ -14,12 +16,14 @@ const describe = (error: unknown): string =>
 export function DataView({
   settings: initialSettings,
   targets,
+  capacity,
   onSettingsSaved,
   onError,
   onNotice,
 }: {
   settings: AppSettings;
   targets: TargetConfig[];
+  capacity: CapacityAssessment;
   onSettingsSaved(): void;
   onError(message: string): void;
   onNotice(message: string): void;
@@ -176,10 +180,22 @@ export function DataView({
             {busy === 'settings' ? 'Saving…' : 'Save settings'}
           </button>
         </div>
+        <CapacityNote
+          assessment={capacity}
+          heading="Capacity check"
+          onApply={(patch) => setSettings({ ...settings, ...patch })}
+        />
         <div className="form-grid three">
           {numberField('default_interval_seconds', 'Default interval (seconds)', 1)}
           {numberField('default_timeout_seconds', 'Default timeout (seconds)', 1, undefined, 300)}
           {numberField('max_concurrent_checks', 'Maximum concurrent checks', 1, undefined, 200)}
+          {numberField(
+            'failure_backoff_max_seconds',
+            'Failure backoff cap (seconds)',
+            0,
+            'A check that keeps failing doubles its interval up to this; 0 disables backoff',
+            86_400,
+          )}
           {numberField(
             'history_max_age_days',
             'History maximum age (days)',

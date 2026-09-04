@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   checkSchema,
   checkTemplateSchema,
+  validateDependencies,
   type CheckConfig,
   type CheckTemplate,
   type TargetConfig,
@@ -152,7 +153,10 @@ export function resolveChecks(
   if (!template) return own;
   const taken = new Set(own.map((check) => check.id));
   const inherited = expandTemplate(template, target).filter((check) => !taken.has(check.id));
-  return [...own, ...inherited];
+  const effective = [...own, ...inherited];
+  const issue = validateDependencies(effective)[0];
+  if (issue) throw new Error(`Check "${issue.checkId}": ${issue.message}`);
+  return effective;
 }
 
 export const templateContextSchema = z.object({

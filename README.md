@@ -63,6 +63,26 @@ auth:
 
 Define those variables in the environment that launches OPOSSUM. Resolved values are never exported, written to status history, sent to the renderer, or intentionally logged. Authorization, cookie, and proxy-authorization headers are rejected from static header configuration.
 
+## Dependencies: don't knock on a door you know is closed
+
+Any check may name precursors with `depends_on`. When a precursor is currently failing, the dependent check is recorded as **Blocked** (a FAIL with a `blocked` diagnostic) without touching the network, so a dead site costs one ping per interval instead of a ping, several TCP timeouts, and an HTTP timeout. The moment the precursor passes again, blocked checks run immediately rather than waiting for their next interval. Checks that are not named as precursors, such as an SSH or Modbus port, can fail freely without blocking anything.
+
+```yaml
+checks:
+  - { id: host-ping, name: Host ping, type: ping }
+  - { id: rdp, name: Remote Desktop, type: tcp, port: 3389, depends_on: [host-ping] }
+  - { id: modbus, name: Modbus, type: tcp, port: 502, depends_on: [host-ping] }
+  - { id: ebo-web, name: EBO WebStation, type: http, url: 'https://{{host}}/', depends_on: [rdp] }
+```
+
+On first run a dependent waits until its precursors have produced a result. Precursors that are paused never block. Cycles and references to unknown checks are rejected when the target or template is saved. In the editor, each check has a _Runs only after these pass_ list covering the target's own and inherited checks.
+
+## Backoff and capacity
+
+**Failure backoff.** After a check crosses its `failures_before_fail` threshold, every further failure doubles its interval, up to `failure_backoff_max_seconds` (default 600, 0 disables). A site that has been down for an hour is probed every ten minutes instead of every minute; the first success restores the normal interval. The monitor marks such checks with _backoff_ and the detail panel shows the current spacing.
+
+**Capacity check.** The default interval is 60 seconds. **Data & history → Monitoring defaults** shows a capacity assessment that multiplies each check's timeout by its launch rate to estimate how many checks would be in flight if everything timed out at once, and compares that with `max_concurrent_checks`. A warning appears in the top bar when headroom is thin, with a suggested concurrency (or a longer default interval when the 200-check cap would not be enough). The import builder shows the same projection for the configuration as it would look after the import.
+
 ## Templates: one definition, many sites
 
 A template is a named set of checks whose text fields may contain placeholders. Link a target to a template and it inherits every check with the placeholders filled in for that target, so monitoring EBO on a hundred sites means one template plus a hundred hosts, not a hundred hand-built check lists. Edit the template later and every linked target is regenerated in place; check identity and history are preserved.
@@ -108,6 +128,8 @@ Exports contain only own checks plus the templates the exported targets referenc
 1. **Map columns.** Headings such as _IP Address_, _Site Name_, _Region_, or _Template_ are detected automatically; adjust the mapping if needed. Only the host column is required. Missing names fall back to the host and IDs are generated from the name (with an optional prefix).
 2. **Choose a template** for every row, or map a column that names one per row. Unmapped columns can be exposed to the template as `{{vars.<name>}}`, for example a _Web Port_ column becomes `{{vars.web_port}}`.
 3. **Review** the generated targets, the rows that were skipped and why, and how the result merges with what is already stored. Then **Add** new targets only or **Replace** the active set.
+
+**Remote Desktop Manager.** A Devolutions RDM JSON export (the `Connections` list) is recognised automatically: folder entries become the group of their children, the host is lifted from `Terminal.Host`, `Host`, or `Url`, and a _Connection type_ column names the protocol (SSH shell, RDP, Web browser, ...) so it can be exposed as a variable or used to choose a template per row. Sample files for every format, including an RDM export, live under [`samples/`](samples/README.md).
 
 JSON, YAML, and XML files may wrap their record list (`sites:`, `targets:`, a repeated element); nested fields are flattened to dotted column names. A file that already is a full OPOSSUM configuration (it has `format_version`) skips the builder and uses the normal preview below. Files are limited to 25 MiB and 5,000 rows.
 

@@ -16,6 +16,8 @@ export interface TableSource {
   /** Workbook sheet names, when the file has more than one. */
   sheets?: string[];
   sheet?: string;
+  /** Recognised vendor export, when the rows were normalised from one. */
+  flavour?: 'rdm';
 }
 export interface ConfigurationSource {
   kind: 'configuration';
@@ -85,9 +87,77 @@ function findRecords(document: unknown, depth = 0): unknown[] | undefined {
   return best;
 }
 
+/** Devolutions Remote Desktop Manager connection type codes that appear in JSON exports. */
+const RDM_CONNECTION_TYPES: Record<number, string> = {
+  1: 'RDP',
+  2: 'Telnet',
+  3: 'Web browser',
+  8: 'VNC',
+  25: 'Folder',
+  36: 'PowerShell',
+  44: 'Telnet',
+  77: 'SSH shell',
+  100: 'Ping',
+};
+const RDM_HOST_KEYS = ['Terminal.Host', 'Host', 'Url', 'RDP.Host', 'VNC.Host', 'Ssh.Host'];
+
+/**
+ * Normalises a Remote Desktop Manager export. Folder entries become the group of their
+ * children, the host is lifted out of whichever protocol block holds it, and the numeric
+ * connection type is spelled out so it can drive a per-row template choice.
+ */
+function normaliseRdm(connections: unknown[]): ImportRow[] {
+  const flat = connections
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => flatten(item));
+  const byId = new Map(flat.map((row) => [row.ID ?? '', row]));
+  const nameOf = (row: ImportRow): string => row.Name ?? '';
+  const groupPath = (row: ImportRow, depth = 0): string => {
+    const parent = row.ParentID ? byId.get(row.ParentID) : undefined;
+    if (!parent || depth > 10) return '';
+    const above = groupPath(parent, depth + 1);
+    return above ? `${above} / ${nameOf(parent)}` : nameOf(parent);
+  };
+  const rows: ImportRow[] = [];
+  for (const row of flat) {
+    const type = Number(row.ConnectionType ?? '');
+    const host = RDM_HOST_KEYS.map((key) => row[key] ?? '').find(Boolean) ?? '';
+    const isFolder =
+      type === 25 || (!host && byId.size > 0 && flat.some((child) => child.ParentID === row.ID));
+    if (isFolder) continue;
+    rows.push({
+      Name: nameOf(row),
+      Host: host.replace(/^https?:\/\//i, '').split('/')[0] ?? host,
+      Group: groupPath(row) || (row.Group ?? ''),
+      'Connection type': RDM_CONNECTION_TYPES[type] ?? row.ConnectionType ?? '',
+      Description: row.Description ?? '',
+      ...row,
+    });
+  }
+  return rows;
+}
+
+function isRdmExport(document: unknown): document is { Connections: unknown[] } {
+  if (!document || typeof document !== 'object') return false;
+  const connections = (document as { Connections?: unknown }).Connections;
+  return (
+    Array.isArray(connections) &&
+    connections.some(
+      (item) => item && typeof item === 'object' && 'ConnectionType' in item && 'Name' in item,
+    )
+  );
+}
+
 function fromDocument(format: SourceFormat, document: unknown): ParsedSource {
   if (document && typeof document === 'object' && 'format_version' in document)
     return { kind: 'configuration', document };
+  if (isRdmExport(document)) {
+    const rows = normaliseRdm(document.Connections).slice(0, MAX_ROWS);
+    if (rows.length === 0)
+      throw new OpossumError('VALIDATION', 'The RDM export contains folders only, no hosts.');
+    const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+    return { kind: 'table', format, columns, rows, flavour: 'rdm' };
+  }
   const records = findRecords(document);
   if (!records)
     throw new OpossumError(

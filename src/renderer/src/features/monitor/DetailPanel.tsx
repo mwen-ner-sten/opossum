@@ -53,7 +53,13 @@ export function DetailPanel({
         </button>
       </div>
       <div className={`detail-hero ${hero}`}>
-        {state && <StatusBadge status={state.status} chip />}
+        {state && (
+          <StatusBadge
+            status={state.status}
+            chip
+            blocked={state.status === 'FAIL' && result?.category === 'blocked'}
+          />
+        )}
         <p>{result?.summary ?? 'No completed result yet.'}</p>
         {state?.isHistorical && (
           <span className="history-banner">
@@ -131,6 +137,18 @@ export function DetailPanel({
             <div>
               <dt>Tags</dt>
               <dd>{check.tags.join(', ')}</dd>
+            </div>
+          )}
+          {check.depends_on && check.depends_on.length > 0 && (
+            <div>
+              <dt>Runs after</dt>
+              <dd className="mono">{check.depends_on.join(', ')}</dd>
+            </div>
+          )}
+          {state?.backoffMs && (
+            <div>
+              <dt>Backoff</dt>
+              <dd>Every {Math.round(state.backoffMs / 1000)} s while failing</dd>
             </div>
           )}
         </dl>

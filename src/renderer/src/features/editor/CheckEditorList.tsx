@@ -9,6 +9,7 @@ export function CheckEditorList({
   placeholders = false,
   defaultHost,
   minimum = 1,
+  inherited = [],
   onChange,
 }: {
   checks: EditableCheck[];
@@ -17,6 +18,8 @@ export function CheckEditorList({
   defaultHost: string;
   /** Fewest checks allowed; the remove button disables at this count. */
   minimum?: number;
+  /** Checks inherited from a template, offered as dependency precursors. */
+  inherited?: Array<{ id: string; name: string }>;
   onChange(checks: EditableCheck[]): void;
 }) {
   const replace = (index: number, check: EditableCheck): void =>
@@ -74,6 +77,12 @@ export function CheckEditorList({
               check={check}
               idLocked={idsLocked}
               placeholders={placeholders}
+              siblings={[
+                ...checks
+                  .filter((item, position) => position !== index && item.id)
+                  .map((item) => ({ id: item.id, name: item.name || item.id })),
+                ...inherited.filter((item) => !checks.some((own) => own.id === item.id)),
+              ]}
               onChange={(update) => replace(index, { ...check, ...update } as EditableCheck)}
               onRetype={(type) => replace(index, retypeCheck(check, type, defaultHost))}
             />

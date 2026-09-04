@@ -1,0 +1,41 @@
+{
+  "generated_by": "facilities inventory export",
+  "sites": [
+    {
+      "code": "chi-bms-01",
+      "name": "Chicago BMS 01",
+      "network": { "ip": "10.20.30.40", "vlan": 120 },
+      "region": "Chicago",
+      "template": "ebo-site",
+      "web_port": 443,
+      "tags": ["ebo", "primary"]
+    },
+    {
+      "code": "chi-bms-02",
+      "name": "Chicago BMS 02",
+      "network": { "ip": "10.20.30.41", "vlan": 120 },
+      "region": "Chicago",
+      "template": "ebo-site",
+      "web_port": 8443,
+      "tags": ["ebo"]
+    },
+    {
+      "code": "den-bms-01",
+      "name": "Denver BMS 01",
+      "network": { "ip": "10.20.31.40", "vlan": 121 },
+      "region": "Denver",
+      "template": "ebo-site",
+      "web_port": 443,
+      "tags": ["ebo"]
+    },
+    {
+      "code": "phx-bms-01",
+      "name": "Phoenix BMS 01",
+      "network": { "ip": "10.20.40.40", "vlan": 140 },
+      "region": "Phoenix",
+      "template": "ebo-site",
+      "web_port": 443,
+      "tags": ["ebo"]
+    }
+  ]
+}

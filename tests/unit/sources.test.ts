@@ -104,3 +104,34 @@ describe('readImportSource', () => {
     await expect(readImportSource(file('empty.csv', '\n'))).rejects.toThrow(/column headings/);
   });
 });
+
+describe('Remote Desktop Manager exports', () => {
+  it('lifts hosts, resolves folder groups, and names connection types', async () => {
+    const source = await readImportSource(join(process.cwd(), 'samples', 'rdm-export.json'));
+    if (source.kind !== 'table') throw new Error('expected a table');
+    expect(source.flavour).toBe('rdm');
+    expect(source.columns.slice(0, 5)).toEqual([
+      'Name',
+      'Host',
+      'Group',
+      'Connection type',
+      'Description',
+    ]);
+    const byName = new Map(source.rows.map((row) => [row.Name, row]));
+    expect(byName.has('Homelab')).toBe(false); // folders are not targets
+    expect(byName.get('proxmox-01')).toMatchObject({
+      Host: '192.0.2.11',
+      Group: 'Homelab',
+      'Connection type': 'SSH shell',
+    });
+    expect(byName.get('nextcloud-01')).toMatchObject({ Group: 'Homelab / proxmox-01' });
+    expect(byName.get('workstation-01')).toMatchObject({
+      Host: '192.0.2.120',
+      'Connection type': 'RDP',
+    });
+    expect(byName.get('Router admin')).toMatchObject({
+      Host: '192.0.2.1',
+      'Connection type': 'Web browser',
+    });
+  });
+});

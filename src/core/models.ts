@@ -16,6 +16,7 @@ export type DiagnosticCategory =
   | 'auth'
   | 'executable_missing'
   | 'paused'
+  | 'blocked'
   | 'unknown'
   | 'canceled'
   | 'unexpected';
@@ -51,6 +52,8 @@ export interface LiveCheckState {
   result?: CheckResult;
   lastKnown?: LastKnownState;
   nextRunAt?: string | undefined;
+  /** Present while failure backoff has stretched the interval; the stretched interval in ms. */
+  backoffMs?: number | undefined;
   isHistorical: boolean;
 }
 

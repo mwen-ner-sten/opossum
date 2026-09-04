@@ -25,8 +25,11 @@ export const CheckRow = memo(function CheckRow({
   const ratio = latencyRatio(result?.durationMs, timeoutSeconds);
   const heat = ratio > 0.75 ? 'hot' : ratio > 0.4 ? 'warm' : '';
   const paused = state.status === 'PAUSED';
+  const blocked = state.status === 'FAIL' && result?.category === 'blocked';
   return (
-    <div className={`check-row row-${state.status.toLowerCase()} ${selected ? 'selected' : ''}`}>
+    <div
+      className={`check-row row-${state.status.toLowerCase()} ${blocked ? 'row-blocked' : ''} ${selected ? 'selected' : ''}`}
+    >
       <button
         type="button"
         className="row-select"
@@ -42,7 +45,7 @@ export const CheckRow = memo(function CheckRow({
         </small>
       </span>
       <span>
-        <StatusBadge status={state.status} />
+        <StatusBadge status={state.status} blocked={blocked} />
         {state.isHistorical && <em className="history-label">Last known</em>}
       </span>
       <span className="diagnostic" title={result?.summary}>
@@ -64,6 +67,15 @@ export const CheckRow = memo(function CheckRow({
             <RelativeTime value={state.nextRunAt} prefix="Next " />
           ) : (
             'No run queued'
+          )}
+          {state.backoffMs && (
+            <span
+              className="backoff-tag"
+              title={`Backing off: this check keeps failing, so it now runs every ${Math.round(state.backoffMs / 1000)} s`}
+            >
+              {' '}
+              · backoff
+            </span>
           )}
         </small>
       </span>
