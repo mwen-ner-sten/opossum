@@ -283,7 +283,7 @@ export function ImportBuilder({
                 </div>
               )}
               {neededVars.length > 0 && (
-                <div className={missingVars.length ? 'warning-box' : 'info-box'}>
+                <div className={`inline-note ${missingVars.length ? 'warning-box' : 'info-box'}`}>
                   Template <strong>{defaultTemplate?.name}</strong> reads{' '}
                   {neededVars.map((name) => (
                     <code key={name} className={missingVars.includes(name) ? 'missing' : ''}>
