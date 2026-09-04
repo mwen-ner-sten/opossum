@@ -14,7 +14,12 @@ describe('layoutFlow', () => {
   it('hangs roots off the start node and places each step after its furthest precursor', () => {
     const layout = layoutFlow(steps, '10.0.0.1');
     const at = (id: string) => layout.nodes.find((node) => node.id === id)!;
-    expect(at(FLOW_START_ID)).toMatchObject({ column: 0, row: 0, type: 'start', label: '10.0.0.1' });
+    expect(at(FLOW_START_ID)).toMatchObject({
+      column: 0,
+      row: 0,
+      type: 'start',
+      label: '10.0.0.1',
+    });
     expect(at('ping')).toMatchObject({ column: 1, row: 0, terminal: false });
     expect(at('dns')).toMatchObject({ column: 1, row: 1, terminal: true });
     expect(at('rdp')).toMatchObject({ column: 2, row: 0 });
@@ -75,7 +80,13 @@ describe('placeholderUsages', () => {
       ],
     });
     expect(usages).toEqual([
-      { name: 'name', checkId: 'web', checkName: 'Web {{name}}', field: 'name', value: 'Web {{name}}' },
+      {
+        name: 'name',
+        checkId: 'web',
+        checkName: 'Web {{name}}',
+        field: 'name',
+        value: 'Web {{name}}',
+      },
       {
         name: 'host',
         checkId: 'web',

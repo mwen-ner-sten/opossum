@@ -13,8 +13,8 @@ const centre = (node: FlowNode) => ({
 });
 
 /**
- * Flow chart of a check list as steps: the target is the single start node, every step with no
- * precursor branches off it, and steps that wait on others sit to the right of them. Steps
+ * Flow chart of a check list as steps. The target is the origin; every step with no precursor is
+ * a start step branching off it, steps that wait on others sit to the right of them, and steps
  * nothing waits on are the end nodes.
  */
 export function CheckFlow({
@@ -33,6 +33,7 @@ export function CheckFlow({
   const width = PAD * 2 + layout.columns * NODE_W + (layout.columns - 1) * COL_GAP;
   const height = PAD * 2 + layout.rows * NODE_H + (layout.rows - 1) * ROW_GAP;
   const ends = layout.nodes.filter((node) => node.terminal && node.id !== FLOW_START_ID).length;
+  const starts = layout.edges.filter((edge) => edge.from === FLOW_START_ID).length;
   return (
     <div className="check-flow" aria-label="Check flow">
       <div className="check-flow-scroll">
@@ -41,7 +42,7 @@ export function CheckFlow({
           height={height}
           viewBox={`0 0 ${width} ${height}`}
           role="img"
-          aria-label={`${steps.length} steps, ${layout.columns - 1} stages, ${ends} end ${ends === 1 ? 'node' : 'nodes'}`}
+          aria-label={`${steps.length} steps: ${starts} start, ${layout.columns - 1} stages, ${ends} end`}
         >
           <defs>
             <marker
@@ -117,9 +118,10 @@ export function CheckFlow({
         </svg>
       </div>
       <p className="check-flow-caption">
-        One start node, {layout.columns - 1} stage{layout.columns - 1 === 1 ? '' : 's'},{' '}
-        {ends} end node{ends === 1 ? '' : 's'}. A step runs only after every step feeding it
-        passes; disabled steps are dimmed.
+        {starts} start step{starts === 1 ? '' : 's'}, {layout.columns - 1} stage
+        {layout.columns - 1 === 1 ? '' : 's'}, {ends} end node{ends === 1 ? '' : 's'}. Steps with
+        nothing above them start straight away; a step runs only after every step feeding it
+        passes. Disabled steps are dimmed.
       </p>
     </div>
   );
