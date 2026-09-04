@@ -248,8 +248,12 @@ export function CheckFields({
       {siblings.length > 0 && (
         <fieldset className="depends-on span-2">
           <legend>
-            Runs only after these pass
-            <small> · a failing precursor records this check as blocked without running it</small>
+            Runs only after these earlier steps pass
+            <small>
+              {' '}
+              · a failing precursor records this check as blocked without running it. Move a
+              check up to make it available here.
+            </small>
           </legend>
           {siblings.map((sibling) => (
             <label key={sibling.id} className="toggle">

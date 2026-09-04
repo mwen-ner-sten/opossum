@@ -45,6 +45,41 @@ export function templatePlaceholders(template: CheckTemplate): string[] {
   return [...found];
 }
 
+export interface PlaceholderUsage {
+  /** Placeholder name without braces, e.g. `vars.web_port`. */
+  name: string;
+  checkId: string;
+  checkName: string;
+  /** Dotted field path inside the check, e.g. `url` or `headers.Host`. */
+  field: string;
+  /** The full field value the placeholder sits in. */
+  value: string;
+}
+
+/**
+ * Every place a template reads a placeholder, so the UI can explain what a variable is for
+ * ("web_port is used by EBO WebStation in url: https://{{host}}:{{vars.web_port}}/").
+ */
+export function placeholderUsages(template: Pick<CheckTemplate, 'checks'>): PlaceholderUsage[] {
+  const usages: PlaceholderUsage[] = [];
+  const visit = (check: TemplateCheckConfig, value: unknown, path: string[]): void => {
+    if (typeof value === 'string') {
+      for (const match of value.matchAll(PLACEHOLDER))
+        usages.push({
+          name: match[1]!,
+          checkId: check.id,
+          checkName: check.name,
+          field: path.join('.'),
+          value,
+        });
+    } else if (Array.isArray(value)) value.forEach((item, index) => visit(check, item, [...path, String(index)]));
+    else if (value && typeof value === 'object')
+      for (const [key, item] of Object.entries(value)) visit(check, item, [...path, key]);
+  };
+  for (const check of template.checks) visit(check, check, []);
+  return usages;
+}
+
 function resolve(name: string, context: TemplateContext): string {
   switch (name) {
     case 'host':
@@ -151,8 +186,28 @@ export function ownChecks(target: TargetConfig): CheckConfig[] {
 }
 
 /**
- * Effective checks for a target: own checks first, then template checks whose IDs do not
- * collide with an own check (an own check always wins so users can override one step).
+ * Merges own checks into the template's step order: each template step is replaced by an own
+ * check with the same ID (so users can override one step), then own checks that add new steps
+ * follow in their own order. Template steps come first because own checks may wait on them.
+ */
+export function mergeInTemplateOrder(
+  templateChecks: ReadonlyArray<{ id: string }>,
+  own: CheckConfig[],
+  inherited: CheckConfig[],
+): CheckConfig[] {
+  const ownById = new Map(own.map((check) => [check.id, check]));
+  const inheritedById = new Map(inherited.map((check) => [check.id, check]));
+  const ordered = templateChecks.flatMap((step) => {
+    const check = ownById.get(step.id) ?? inheritedById.get(step.id);
+    return check ? [check] : [];
+  });
+  const placed = new Set(ordered.map((check) => check.id));
+  return [...ordered, ...own.filter((check) => !placed.has(check.id))];
+}
+
+/**
+ * Effective checks for a target in step order: template steps (an own check with the same ID
+ * overrides the inherited one in place), then the target's own additional checks.
  */
 export function resolveChecks(
   target: TargetConfig,
@@ -162,7 +217,7 @@ export function resolveChecks(
   if (!template) return own;
   const taken = new Set(own.map((check) => check.id));
   const inherited = expandTemplate(template, target).filter((check) => !taken.has(check.id));
-  const effective = [...own, ...inherited];
+  const effective = mergeInTemplateOrder(template.checks, own, inherited);
   const issue = validateDependencies(effective)[0];
   if (issue) throw new Error(`Check "${issue.checkId}": ${issue.message}`);
   return effective;
@@ -210,7 +265,7 @@ export function resolveChecksPartial(
       else throw error;
     }
   }
-  const effective = [...own, ...inherited];
+  const effective = mergeInTemplateOrder(template.checks, own, inherited);
   // Dependencies on a check that could not expand are dropped rather than rejected.
   const present = new Set(effective.map((check) => check.id));
   const checks = effective.map((check) =>

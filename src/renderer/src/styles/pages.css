@@ -815,3 +815,151 @@
 .var-need-row small {
   white-space: nowrap;
 }
+
+/* --- Check flow chart (editors) --- */
+.check-flow {
+  margin: 12px 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.check-flow-scroll {
+  overflow-x: auto;
+  background:
+    radial-gradient(color-mix(in srgb, var(--line) 80%, transparent) 1px, transparent 1px) 0 0 /
+      14px 14px;
+}
+.check-flow svg {
+  display: block;
+}
+.flow-edge {
+  fill: none;
+  stroke: var(--faint);
+  stroke-width: 1.5;
+}
+.flow-arrow-head {
+  fill: var(--faint);
+}
+.flow-node rect {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+  stroke-width: 1.2;
+}
+.flow-node[role='button'] {
+  cursor: pointer;
+}
+.flow-node[role='button']:hover rect,
+.flow-node:focus-visible rect {
+  stroke: var(--accent);
+}
+.flow-node:focus-visible {
+  outline: none;
+}
+.flow-selected rect {
+  stroke: var(--accent);
+  stroke-width: 2;
+  fill: var(--accent-soft);
+}
+.flow-start rect {
+  fill: var(--rail);
+  stroke: var(--rail);
+}
+.flow-start .flow-label {
+  fill: var(--rail-text-strong);
+  font-weight: 600;
+}
+.flow-end rect {
+  stroke-dasharray: none;
+  stroke: var(--pass);
+}
+.flow-disabled {
+  opacity: 0.45;
+}
+.flow-type {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  fill: var(--muted);
+}
+.flow-ping .flow-type {
+  fill: var(--pass);
+}
+.flow-tcp .flow-type {
+  fill: var(--unknown);
+}
+.flow-http .flow-type {
+  fill: var(--accent);
+}
+.flow-label {
+  font-size: var(--text-sm);
+  fill: var(--text);
+}
+.check-flow-caption {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+.check-editor.selected {
+  border-color: var(--accent);
+}
+
+/* --- Variable help --- */
+.variable-help {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+.variable-help p {
+  margin: 0;
+  line-height: 1.5;
+}
+.variable-help dl {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+.variable-help dl > div {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: start;
+}
+.variable-help dt code {
+  color: var(--text);
+  font-weight: 600;
+}
+.variable-help dd {
+  margin: 0;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.variable-help dd span {
+  overflow-wrap: anywhere;
+}
+.variable-help dd strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.variable-help dd code {
+  color: var(--text);
+}
+.variable-help mark {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.var-needs .variable-help {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--unknown) 40%, transparent);
+}

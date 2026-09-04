@@ -162,39 +162,29 @@ export interface DependencyIssue {
 }
 
 /**
- * Verifies that every `depends_on` entry names another check in the same set and that the
- * dependency graph has no cycles. Returns an empty list when the set is valid.
+ * Verifies that every `depends_on` entry names an *earlier* check in the same list. Checks are
+ * ordered steps: a step may only wait on steps before it, which keeps the graph acyclic by
+ * construction and lets the editor present dependencies as "runs after step N".
  */
 export function validateDependencies(
   checks: ReadonlyArray<{ id: string; depends_on?: string[] | undefined }>,
 ): DependencyIssue[] {
   const issues: DependencyIssue[] = [];
-  const byId = new Map(checks.map((check) => [check.id, check]));
-  for (const check of checks) {
+  const position = new Map(checks.map((check, index) => [check.id, index]));
+  checks.forEach((check, index) => {
     for (const dependency of check.depends_on ?? []) {
+      const precursor = position.get(dependency);
       if (dependency === check.id)
         issues.push({ checkId: check.id, message: 'A check cannot depend on itself' });
-      else if (!byId.has(dependency))
+      else if (precursor === undefined)
         issues.push({ checkId: check.id, message: `Depends on unknown check "${dependency}"` });
+      else if (precursor > index)
+        issues.push({
+          checkId: check.id,
+          message: `Step ${index + 1} can only wait on earlier steps; "${dependency}" is step ${precursor + 1}. Move it above this check.`,
+        });
     }
-  }
-  if (issues.length) return issues;
-  const state = new Map<string, 'visiting' | 'done'>();
-  const visit = (id: string, trail: string[]): void => {
-    const mark = state.get(id);
-    if (mark === 'done') return;
-    if (mark === 'visiting') {
-      issues.push({
-        checkId: id,
-        message: `Dependency cycle: ${[...trail, id].join(' → ')}`,
-      });
-      return;
-    }
-    state.set(id, 'visiting');
-    for (const dependency of byId.get(id)?.depends_on ?? []) visit(dependency, [...trail, id]);
-    state.set(id, 'done');
-  };
-  for (const check of checks) visit(check.id, []);
+  });
   return issues;
 }
 

@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Layers } from 'lucide-react';
 import { targetSchema, type CheckTemplate, type TargetConfig } from '@core/config';
-import { ownChecks, resolveChecksPartial, templatePlaceholders } from '@core/templates';
+import {
+  ownChecks,
+  placeholderUsages,
+  resolveChecksPartial,
+  templatePlaceholders,
+} from '@core/templates';
+import { VariableHelp } from './editor/VariableHelp';
 import { Modal } from '../components/Modal';
 import { CheckEditorList } from './editor/CheckEditorList';
 import { newPingCheck } from './editor/check-helpers';
@@ -245,6 +251,12 @@ export function TargetEditor({
           )}
         </div>
         {template && (
+          <VariableHelp
+            usages={placeholderUsages(template)}
+            intro="Each variable below is read by the template; give this target its own value for it."
+          />
+        )}
+        {template && (
           <div className="inherited-list" aria-label="Inherited checks">
             {inheritedPreview.missing.length > 0 && (
               <div className="warning-box">
@@ -282,7 +294,7 @@ export function TargetEditor({
         idsLocked={Boolean(target && !duplicate)}
         defaultHost={draft.host || 'example.internal'}
         minimum={draft.template ? 0 : 1}
-        inherited={inheritedPreview.checks.map((check) => ({ id: check.id, name: check.name }))}
+        inherited={inheritedPreview.checks}
         onChange={(checks) => setDraft({ ...draft, checks })}
       />
       {errors.length > 0 && (

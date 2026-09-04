@@ -82,8 +82,9 @@ describe('resolveChecks', () => {
       tags: [],
     };
     const checks = resolveChecks({ ...site, checks: [own] }, ebo);
-    expect(checks.map((check) => check.id)).toEqual(['rdp', 'host-ping', 'web']);
-    expect(checks[0]).toMatchObject({ port: 3390 });
+    // The override takes the template step's place so the step order is unchanged.
+    expect(checks.map((check) => check.id)).toEqual(['host-ping', 'rdp', 'web']);
+    expect(checks[1]).toMatchObject({ port: 3390 });
     expect(ownChecks({ ...site, checks })).toEqual([own]);
   });
   it('returns own checks only when there is no template', () => {

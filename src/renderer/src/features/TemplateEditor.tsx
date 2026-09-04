@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CheckTemplate } from '@core/config';
-import { templatePlaceholders, validateTemplate } from '@core/templates';
+import { placeholderUsages, templatePlaceholders, validateTemplate } from '@core/templates';
+import { VariableHelp } from './editor/VariableHelp';
 import { Modal } from '../components/Modal';
 import { CheckEditorList } from './editor/CheckEditorList';
 import { newPingCheck } from './editor/check-helpers';
@@ -49,6 +50,7 @@ export function TemplateEditor({
     setErrors([]);
   }, [open, template]);
   const placeholders = templatePlaceholders({ ...draft, checks: draft.checks });
+  const usages = placeholderUsages(draft);
 
   const save = async (): Promise<void> => {
     const { template: valid, issues } = validateTemplate(draft);
@@ -141,6 +143,13 @@ export function TemplateEditor({
               This template uses: {placeholders.map((item) => `{{${item}}}`).join(', ')}
             </small>
           )}
+          <small>
+            Built-in placeholders come from the target. Anything under <code>vars.</code> is a
+            variable each target sets for itself.
+          </small>
+        </div>
+        <div className="span-2">
+          <VariableHelp usages={usages} />
         </div>
       </div>
       <CheckEditorList

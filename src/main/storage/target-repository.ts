@@ -54,7 +54,7 @@ export class TargetRepository {
       )
       .all() as TargetRow[];
     const checkQuery = this.db.prepare(
-      `SELECT * FROM checks WHERE target_internal_id = ? ${includeDeleted ? '' : 'AND deleted_at IS NULL'} ORDER BY lower(name), config_id`,
+      `SELECT * FROM checks WHERE target_internal_id = ? ${includeDeleted ? '' : 'AND deleted_at IS NULL'} ORDER BY position, lower(name), config_id`,
     );
     return targets.flatMap((target) => {
       const checks = (checkQuery.all(target.internal_id) as CheckRow[]).flatMap((row) => {
@@ -164,7 +164,7 @@ export class TargetRepository {
             timestamp,
           );
       }
-      for (const check of effective) this.upsertCheck(internalId, check, undefined);
+      effective.forEach((check, position) => this.upsertCheck(internalId, check, position));
       // Inherited checks are always fully regenerated; own checks only when replacing.
       const keep = (replaceChecks ? effective : [...own, ...effective]).map((check) => check.id);
       const scope = replaceChecks ? '' : 'AND template_id IS NOT NULL';
@@ -187,13 +187,21 @@ export class TargetRepository {
     const check = checkSchema.parse(checkInput);
     this.db.transaction(() => {
       const { targetInternalId } = this.internalIds(targetId);
-      this.upsertCheck(targetInternalId, check, originalCheckId);
+      // A single-check save keeps the step where it is; a new step goes on the end.
+      const current = this.db
+        .prepare('SELECT position FROM checks WHERE target_internal_id = ? AND config_id = ?')
+        .get(targetInternalId, originalCheckId ?? check.id) as { position: number } | undefined;
+      const last = this.db
+        .prepare('SELECT COALESCE(MAX(position), -1) AS last FROM checks WHERE target_internal_id = ?')
+        .get(targetInternalId) as { last: number };
+      this.upsertCheck(targetInternalId, check, current?.position ?? last.last + 1, originalCheckId);
     })();
   }
 
   private upsertCheck(
     targetInternalId: string,
     check: CheckConfig,
+    position: number,
     originalCheckId?: string,
   ): void {
     const lookupId = originalCheckId ?? check.id;
@@ -214,7 +222,7 @@ export class TargetRepository {
     if (existing) {
       this.db
         .prepare(
-          `UPDATE checks SET config_id=?, name=?, type=?, enabled=?, config_json=?, template_id=?, updated_at=?, deleted_at=NULL WHERE internal_id=?`,
+          `UPDATE checks SET config_id=?, name=?, type=?, enabled=?, config_json=?, template_id=?, position=?, updated_at=?, deleted_at=NULL WHERE internal_id=?`,
         )
         .run(
           check.id,
@@ -223,14 +231,15 @@ export class TargetRepository {
           Number(check.enabled),
           JSON.stringify(stored),
           templateId ?? null,
+          position,
           timestamp,
           existing.internal_id,
         );
     } else {
       this.db
         .prepare(
-          `INSERT INTO checks(internal_id,target_internal_id,config_id,name,type,enabled,config_json,template_id,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO checks(internal_id,target_internal_id,config_id,name,type,enabled,config_json,template_id,position,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           randomUUID(),
@@ -241,6 +250,7 @@ export class TargetRepository {
           Number(check.enabled),
           JSON.stringify(stored),
           templateId ?? null,
+          position,
           timestamp,
           timestamp,
         );

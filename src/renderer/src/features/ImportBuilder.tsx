@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, FileText, Table2, Wand2 } from 'lucide-react';
 import type { CheckTemplate } from '@core/config';
+import { placeholderUsages } from '@core/templates';
 import {
   MAPPED_FIELDS,
   buildTargetsFromRows,
@@ -11,6 +12,7 @@ import {
 import type { ImportMode, TableImportPreview, TableImportSource } from '@shared/contracts';
 import { CapacityNote } from '../components/CapacityNote';
 import { Modal } from '../components/Modal';
+import { VariableHelp } from './editor/VariableHelp';
 
 const FIELD_LABELS: Record<MappedField, string> = {
   host: 'Host / IP (required)',
@@ -289,6 +291,13 @@ export function ImportBuilder({
                     Template <strong>{defaultTemplate?.name}</strong> reads these variables. Map a
                     column, or type a value to use for every row that has none.
                   </span>
+                  {defaultTemplate && (
+                    <VariableHelp
+                      usages={placeholderUsages(defaultTemplate)}
+                      names={neededVars}
+                      intro="Where each variable is used:"
+                    />
+                  )}
                   {neededVars.map((name) => (
                     <div key={name} className="var-need-row">
                       <code>{`{{vars.${name}}}`}</code>

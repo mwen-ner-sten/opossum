@@ -48,3 +48,20 @@ export const newPingCheck = (): EditableCheck => ({
   enabled: true,
   tags: [],
 });
+
+/**
+ * Drops any dependency that no longer points at an earlier step, so reordering never leaves a
+ * check waiting on something below it.
+ */
+export function normalizeDependencies(
+  checks: EditableCheck[],
+  inheritedIds: readonly string[],
+): EditableCheck[] {
+  const earlier = new Set(inheritedIds);
+  return checks.map((check) => {
+    const kept = (check.depends_on ?? []).filter((id) => earlier.has(id));
+    earlier.add(check.id);
+    if (kept.length === (check.depends_on?.length ?? 0)) return check;
+    return { ...check, depends_on: kept.length ? kept : undefined };
+  });
+}

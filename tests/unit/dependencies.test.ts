@@ -94,15 +94,19 @@ function harness(pingStatus: 'PASS' | 'FAIL') {
 }
 
 describe('check dependencies', () => {
-  it('rejects unknown and cyclic dependencies at validation time', () => {
+  it('only lets a step wait on earlier steps, which rules out cycles', () => {
     expect(validateDependencies([{ id: 'a', depends_on: ['b'] }])[0]?.message).toMatch(/unknown/);
     expect(validateDependencies([{ id: 'a', depends_on: ['a'] }])[0]?.message).toMatch(/itself/);
-    const cycle = validateDependencies([
+    const forward = validateDependencies([
       { id: 'a', depends_on: ['b'] },
       { id: 'b', depends_on: ['c'] },
       { id: 'c', depends_on: ['a'] },
     ]);
-    expect(cycle[0]?.message).toMatch(/cycle/i);
+    expect(forward.map((issue) => issue.checkId)).toEqual(['a', 'b']);
+    expect(forward[0]?.message).toMatch(/Step 1 can only wait on earlier steps; "b" is step 2/);
+    expect(
+      validateDependencies([{ id: 'ping' }, { id: 'rdp', depends_on: ['ping'] }]),
+    ).toEqual([]);
     const target = chain();
     target.checks[1]!.depends_on = ['web'];
     expect(targetSchema.safeParse(target).success).toBe(false);

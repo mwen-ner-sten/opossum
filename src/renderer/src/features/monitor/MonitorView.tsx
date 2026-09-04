@@ -22,7 +22,7 @@ import { missingTemplateVariables } from '@core/templates';
 import { StatusBadge } from '../../components/StatusBadge';
 import { CheckRow } from './CheckRow';
 import { DetailPanel, type SelectedCheck } from './DetailPanel';
-import { STATUS_ORDER, keyFor } from './format';
+import { keyFor } from './format';
 
 const PIP_ORDER: CheckStatus[] = ['FAIL', 'CHECKING', 'UNKNOWN', 'PASS', 'PAUSED'];
 
@@ -131,12 +131,9 @@ export function MonitorView({
       haystack.includes(search.toLowerCase())
     );
   };
+  // Checks stay in step order so the board reads like the template: ping, then ports, then web.
   const orderedChecks = (target: TargetConfig): CheckConfig[] =>
-    target.checks
-      .filter((check) => visible(target, check))
-      .sort(
-        (a, b) => STATUS_ORDER[stateOf(target, a).status] - STATUS_ORDER[stateOf(target, b).status],
-      );
+    target.checks.filter((check) => visible(target, check));
   const copy = async (text: string, label: string): Promise<void> => {
     await navigator.clipboard.writeText(text);
     onNotice(`${label} copied`);

@@ -172,6 +172,12 @@ export const migrations: Migration[] = [
       CREATE INDEX idx_targets_template ON targets(template_id);
     `,
   },
+  {
+    version: 5,
+    changesStoredData: false,
+    // Checks are ordered steps; the position keeps template and editor order across restarts.
+    sql: `ALTER TABLE checks ADD COLUMN position INTEGER NOT NULL DEFAULT 0;`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = migrations[migrations.length - 1]!.version;
