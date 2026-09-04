@@ -5,6 +5,14 @@ import type { CheckResult } from '@core/models';
 import { Scheduler, type SchedulerCallbacks } from '@core/scheduler';
 
 const tick = (ms = 0) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** Polls until `predicate` holds; fails loudly instead of relying on a fixed sleep. */
+const waitFor = async (predicate: () => boolean, label: string, timeoutMs = 2_000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+    await tick(1);
+  }
+};
 const stamp = () => new Date().toISOString();
 const pass = (): CheckResult => ({
   status: 'PASS',
@@ -172,8 +180,9 @@ describe('scheduler', () => {
 
   it('retries quietly until failures_before_fail is reached', async () => {
     const recorded: CheckResult[] = [];
-    const results = [fail(), fail(), fail()];
-    const ping: CheckRunner = () => Promise.resolve(results.shift() ?? pass());
+    // Each run parks until the test releases it, so the assertions do not depend on timing.
+    const pending: Array<(result: CheckResult) => void> = [];
+    const ping: CheckRunner = () => new Promise<CheckResult>((resolve) => pending.push(resolve));
     const scheduler = new Scheduler(
       DEFAULT_SETTINGS,
       [target('one', { failures_before_fail: 3 })],
@@ -182,10 +191,17 @@ describe('scheduler', () => {
       { runners: { ping }, softFailRetryMs: 1 },
     );
     scheduler.start();
-    await tick(5);
-    expect(scheduler.getStates()[0]?.status).toBe('UNKNOWN');
-    await tick(20);
-    expect(scheduler.getStates()[0]?.status).toBe('FAIL');
+    const status = () => scheduler.getStates()[0]?.status;
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await waitFor(() => pending.length === attempt, `run ${attempt} to start`);
+      // Failures below the threshold leave the check UNKNOWN and are not recorded.
+      expect(status()).not.toBe('FAIL');
+      expect(recorded).toHaveLength(0);
+      pending[attempt - 1]?.(fail());
+    }
+
+    await waitFor(() => status() === 'FAIL', 'the third failure to turn the check FAIL');
     expect(recorded).toHaveLength(1);
     await scheduler.stop();
   });
