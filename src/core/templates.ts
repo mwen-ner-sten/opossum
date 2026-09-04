@@ -130,6 +130,7 @@ export function expandTemplate(template: CheckTemplate, context: TemplateContext
       if (error instanceof PlaceholderError) throw error;
       throw new Error(
         `Template "${template.id}" check "${check.id}": ${error instanceof Error ? error.message : 'invalid'}`,
+        { cause: error },
       );
     }
     const parsed = checkSchema.safeParse({ ...expanded, from_template: template.id });
