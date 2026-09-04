@@ -14,8 +14,32 @@ permissions:
   contents: read
 
 jobs:
+  checks:
+    name: Format, lint, typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Static checks never launch Electron, so skip the binary download entirely.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Restore node_modules
+        id: modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node_modules-${{ hashFiles('package-lock.json') }}
+      - if: steps.modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+
   verify:
-    name: Verify (Windows)
+    name: Tests, build, end-to-end, portable exe (Windows)
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
@@ -25,13 +49,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci
-
-      # Cheap checks first so a formatting or type error fails the job in minutes.
-      - run: npm run format:check
-      - run: npm run lint
-      - run: npm run typecheck
+      - name: Restore node_modules
+        id: modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node_modules-${{ hashFiles('package-lock.json') }}
+      - name: Restore Electron and electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-electron-
+      - if: steps.modules.outputs.cache-hit != 'true'
+        run: npm ci
 
       # Unit and integration tests mock ping.exe and use Windows sockets.
       - run: npm run test:coverage
