@@ -10,6 +10,14 @@ import type { CheckResult, LiveCheckState } from '@core/models';
 import { Scheduler, type SchedulerCallbacks } from '@core/scheduler';
 
 const tick = (ms = 0) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** Polls until `predicate` holds instead of sleeping for a guessed number of milliseconds. */
+const waitFor = async (predicate: () => boolean, label: string, timeoutMs = 2_000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+    await tick(1);
+  }
+};
 const stamp = () => new Date().toISOString();
 const result = (status: 'PASS' | 'FAIL'): CheckResult => ({
   status,
@@ -167,8 +175,10 @@ describe('check dependencies', () => {
 describe('status held since', () => {
   it('keeps the first timestamp while the status holds and resets when it flips', async () => {
     let status: 'PASS' | 'FAIL' = 'FAIL';
+    let completed = 0;
     const ping: CheckRunner = async () => {
       await tick(1);
+      completed += 1;
       return result(status);
     };
     const target = chain();
@@ -187,17 +197,23 @@ describe('status held since', () => {
       },
       { runners: { ping } },
     );
+    // Resolves once run `n` has finished and its result has been published.
+    const settled = (n: number) =>
+      waitFor(
+        () => completed === n && states[0]?.status !== 'CHECKING' && !!states[0]?.result,
+        `run ${n} to settle`,
+      );
     scheduler.start();
-    await tick(30);
+    await settled(1);
     const since = states[0]?.statusSince;
     expect(since).toBe(states[0]?.result?.completedAt);
     scheduler.runCheck('site', 'ping');
-    await tick(30);
+    await settled(2);
     expect(states[0]?.statusSince).toBe(since);
     expect(states[0]?.result?.completedAt).not.toBe(since);
     status = 'PASS';
     scheduler.runCheck('site', 'ping');
-    await tick(30);
+    await settled(3);
     expect(states[0]?.status).toBe('PASS');
     expect(states[0]?.statusSince).toBe(states[0]?.result?.completedAt);
     await scheduler.stop();
@@ -207,8 +223,10 @@ describe('status held since', () => {
 describe('failure backoff', () => {
   it('doubles the interval after the failure threshold and resets on recovery', async () => {
     let status: 'PASS' | 'FAIL' = 'FAIL';
+    let completed = 0;
     const ping: CheckRunner = async () => {
       await tick(1);
+      completed += 1;
       return result(status);
     };
     const target = chain();
@@ -227,23 +245,28 @@ describe('failure backoff', () => {
       },
       { runners: { ping } },
     );
+    const settled = (n: number) =>
+      waitFor(
+        () => completed === n && states[0]?.status !== 'CHECKING' && !!states[0]?.result,
+        `run ${n} to settle`,
+      );
     scheduler.start();
-    await tick(30);
+    await settled(1);
     const first = states[0]!;
     expect(first.status).toBe('FAIL');
     expect(first.backoffMs).toBeUndefined(); // first failure keeps the normal interval
     scheduler.runCheck('site', 'ping');
-    await tick(30);
+    await settled(2);
     expect(states[0]?.backoffMs).toBe(20_000);
     scheduler.runCheck('site', 'ping');
-    await tick(30);
+    await settled(3);
     expect(states[0]?.backoffMs).toBe(40_000);
     scheduler.runCheck('site', 'ping');
-    await tick(30);
+    await settled(4);
     expect(states[0]?.backoffMs).toBe(60_000); // capped
     status = 'PASS';
     scheduler.runCheck('site', 'ping');
-    await tick(30);
+    await settled(5);
     expect(states[0]?.status).toBe('PASS');
     expect(states[0]?.backoffMs).toBeUndefined();
     await scheduler.stop();
