@@ -28,7 +28,9 @@ export function Modal({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="modal-overlay" />
-        <Dialog.Content className={`modal ${wide ? 'modal-wide' : ''} ${sheet ? 'sheet' : ''}`}>
+        <Dialog.Content
+          className={`modal ${wide ? 'modal-wide' : ''} ${sheet ? 'sheet' : ''} ${sheet && wide ? 'sheet-wide' : ''}`}
+        >
           <div className="modal-heading">
             <div>
               <Dialog.Title>{title}</Dialog.Title>

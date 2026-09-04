@@ -18,6 +18,8 @@ export interface TableSource {
   sheet?: string;
   /** Recognised vendor export, when the rows were normalised from one. */
   flavour?: 'rdm';
+  /** Opening portion of the source text, for showing the file as it was received. */
+  raw?: string;
 }
 export interface ConfigurationSource {
   kind: 'configuration';
@@ -249,6 +251,38 @@ async function parseWorkbook(filePath: string, sheet?: string): Promise<TableSou
 }
 
 export const SUPPORTED_EXTENSIONS = ['yaml', 'yml', 'json', 'csv', 'tsv', 'txt', 'xml', 'xlsx'];
+const RAW_PREVIEW_CHARS = 6_000;
+
+/** Attaches the opening portion of the source text to a table so the UI can show the file. */
+export function withRaw(source: ParsedSource, text: string): ParsedSource {
+  if (source.kind !== 'table') return source;
+  return {
+    ...source,
+    raw: text.length > RAW_PREVIEW_CHARS ? `${text.slice(0, RAW_PREVIEW_CHARS)}\n…` : text,
+  };
+}
+
+function parseText(extension: string, text: string): ParsedSource {
+  switch (extension) {
+    case 'yaml':
+    case 'yml':
+      return fromDocument('yaml', parseYaml(text));
+    case 'json':
+      return fromDocument('json', JSON.parse(text));
+    case 'xml':
+      return parseXml(text);
+    case 'tsv':
+      return parseDelimitedText(text, 'tsv');
+    case 'csv':
+    case 'txt':
+      return parseDelimitedText(text, extension === 'txt' ? 'text' : 'csv');
+    default:
+      throw new OpossumError(
+        'VALIDATION',
+        `Unsupported file type ".${extension}". Use ${SUPPORTED_EXTENSIONS.join(', ')}.`,
+      );
+  }
+}
 
 /** Reads any supported file into either a table of rows or a full configuration document. */
 export async function readImportSource(filePath: string, sheet?: string): Promise<ParsedSource> {
@@ -259,25 +293,7 @@ export async function readImportSource(filePath: string, sheet?: string): Promis
     throw new OpossumError('VALIDATION', 'Import files are limited to 25 MiB.');
   const text = buffer.toString('utf8');
   try {
-    switch (extension) {
-      case 'yaml':
-      case 'yml':
-        return fromDocument('yaml', parseYaml(text));
-      case 'json':
-        return fromDocument('json', JSON.parse(text));
-      case 'xml':
-        return parseXml(text);
-      case 'tsv':
-        return parseDelimitedText(text, 'tsv');
-      case 'csv':
-      case 'txt':
-        return parseDelimitedText(text, extension === 'txt' ? 'text' : 'csv');
-      default:
-        throw new OpossumError(
-          'VALIDATION',
-          `Unsupported file type ".${extension}". Use ${SUPPORTED_EXTENSIONS.join(', ')}.`,
-        );
-    }
+    return withRaw(parseText(extension, text), text);
   } catch (error) {
     if (error instanceof OpossumError) throw error;
     throw new OpossumError(

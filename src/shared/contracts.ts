@@ -35,6 +35,8 @@ export interface TableImportSource {
   sheet?: string;
   /** Recognised vendor export the rows were normalised from, e.g. Remote Desktop Manager. */
   flavour?: 'rdm';
+  /** Opening portion of the file text (absent for workbooks). */
+  rawPreview?: string;
   suggestedMapping: ImportMapping;
 }
 export interface TableImportOptions {

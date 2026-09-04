@@ -31,7 +31,12 @@ import {
   parseConfigurationYaml,
   previewImport,
 } from './transfer/import';
-import { parseDelimitedText, readImportSource, type TableSource } from './transfer/sources';
+import {
+  parseDelimitedText,
+  readImportSource,
+  withRaw,
+  type TableSource,
+} from './transfer/sources';
 
 export interface ApplicationEvents {
   status(states: LiveCheckState[]): void;
@@ -236,7 +241,8 @@ export class ApplicationService {
   /** Opens pasted CSV or TSV text in the import builder. */
   importFromText(text: string): TableImportSource {
     const format = text.includes('\t') ? 'tsv' : 'csv';
-    return this.describeTable('', parseDelimitedText(text, format));
+    const source = withRaw(parseDelimitedText(text, format), text);
+    return this.describeTable('', source as TableSource);
   }
 
   private describeTable(filePath: string, source: TableSource): TableImportSource {
@@ -250,6 +256,7 @@ export class ApplicationService {
       ...(source.sheets ? { sheets: source.sheets } : {}),
       ...(source.sheet ? { sheet: source.sheet } : {}),
       ...(source.flavour ? { flavour: source.flavour } : {}),
+      ...(source.raw ? { rawPreview: source.raw } : {}),
       suggestedMapping: autoDetectMapping(source.columns),
     };
   }

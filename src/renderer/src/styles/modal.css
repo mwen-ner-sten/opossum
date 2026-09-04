@@ -252,3 +252,103 @@
     opacity: 0;
   }
 }
+
+/* Extra-wide sheet for two-pane tools such as the import builder. */
+.modal.sheet.sheet-wide {
+  width: min(1240px, calc(100vw - 48px));
+}
+.builder-layout {
+  display: grid;
+  grid-template-columns: minmax(360px, 5fr) minmax(360px, 6fr);
+  gap: 16px;
+  align-items: start;
+}
+.builder-controls {
+  display: grid;
+  gap: 14px;
+}
+.builder-controls .editor-block + .editor-block {
+  margin-top: 0;
+}
+.builder-preview {
+  position: sticky;
+  top: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  max-height: calc(100vh - 170px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.preview-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 6px 0;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+.preview-tabs button {
+  border: 1px solid transparent;
+  border-bottom: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 7px 11px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.preview-tabs button:hover {
+  color: var(--text);
+}
+.preview-tabs button.active {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--line);
+  margin-bottom: -1px;
+}
+.preview-caption {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  border-bottom: 1px solid var(--line);
+}
+.preview-scroll {
+  overflow: auto;
+  min-height: 0;
+}
+.data-table td.mapped {
+  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+}
+.data-table tr.row-issue td {
+  background: var(--unknown-soft);
+}
+.data-table .issue-cell {
+  color: var(--unknown);
+  white-space: normal;
+}
+.raw-preview {
+  margin: 0;
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre;
+  tab-size: 4;
+}
+@media (max-width: 1180px) {
+  .builder-layout {
+    grid-template-columns: 1fr;
+  }
+  .builder-preview {
+    position: static;
+    max-height: 420px;
+  }
+}
