@@ -138,7 +138,9 @@ describe('maintenance engine', () => {
     engine.stop();
   });
 
-  it('keeps the maintenance log bounded', () => {
+  // Runs optimize (PRAGMA optimize + WAL checkpoint) 225 times; CI runner disks can need
+  // well over the default 5 s for that many checkpoints.
+  it('keeps the maintenance log bounded', { timeout: 60_000 }, () => {
     const { repositories } = setup();
     for (let index = 0; index < MAINTENANCE_RUNS_KEPT + 25; index += 1)
       repositories.optimize(false);
