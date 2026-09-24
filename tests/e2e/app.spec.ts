@@ -277,6 +277,81 @@ test('guidance, missing template values, and session sharing work through the ap
   }
 });
 
+test('the verdict compares each check with its result before the session', async () => {
+  let healthy = true;
+  const server = createServer((req, res) => {
+    res.writeHead(req.url === '/steady' || healthy ? 200 : 503);
+    res.end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('No HTTP port');
+  const http = (id: string, name: string, path: string) => ({
+    id,
+    name,
+    type: 'http' as const,
+    url: `http://127.0.0.1:${address.port}${path}`,
+    method: 'GET' as const,
+    expected_status: 200,
+    headers: {},
+    follow_redirects: true,
+    verify_tls: true,
+    enabled: true,
+    tags: [],
+  });
+  try {
+    let window = await launch();
+    await window.evaluate(
+      async (checks) => {
+        await globalThis.window.opossum.saveTarget({
+          id: 'bms',
+          name: 'BMS server',
+          host: '127.0.0.1',
+          enabled: true,
+          checks,
+        });
+      },
+      [http('web', 'WebStation', '/'), http('steady', 'Steady', '/steady')],
+    );
+    // No earlier session yet: passing checks are simply OK.
+    await expect(window.getByText('Everything that passed before passes now')).toBeVisible({
+      timeout: 15_000,
+    });
+    const closed = application!.waitForEvent('close');
+    await window.close();
+    await closed;
+    application = undefined;
+
+    // The patch "breaks" the web service.
+    healthy = false;
+    window = await launch();
+    const originalClipboard = await application!.evaluate(({ clipboard }) => clipboard.readText());
+    await expect(window.getByText('1 check broke since last session')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(window.locator('.verdict-pill', { hasText: 'Broke' })).toHaveCount(1);
+    await window.getByRole('button', { name: /1 Broke/ }).click();
+    await expect(window.getByText('WebStation', { exact: true })).toBeVisible();
+    await expect(window.getByText('Steady', { exact: true })).toHaveCount(0);
+    await window.getByRole('button', { name: /Copy verdict/ }).click();
+    await expect
+      // The Windows clipboard stores line breaks as CRLF.
+      .poll(async () =>
+        (await application!.evaluate(({ clipboard }) => clipboard.readText())).replaceAll(
+          '\r\n',
+          '\n',
+        ),
+      )
+      .toContain('Broke (1):\n- BMS server (127.0.0.1) / WebStation: HTTP 503');
+    await application!.evaluate(
+      ({ clipboard }, text) => clipboard.writeText(text),
+      originalClipboard,
+    );
+  } finally {
+    server.close();
+  }
+});
+
 // eslint-disable-next-line no-empty-pattern
 test('500 targets remain searchable while monitoring local HTTP endpoints', async ({}, testInfo) => {
   test.setTimeout(120_000);

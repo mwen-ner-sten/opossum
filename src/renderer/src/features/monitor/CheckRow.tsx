@@ -7,6 +7,7 @@ import { RelativeTime } from '../../components/RelativeTime';
 import { StatusBadge } from '../../components/StatusBadge';
 import { formatDuration, latencyRatio } from './format';
 import { checkGuidance } from '@core/check-guidance';
+import { checkVerdict } from '@core/verdict';
 
 export const CheckRow = memo(function CheckRow({
   target,
@@ -29,6 +30,7 @@ export const CheckRow = memo(function CheckRow({
   const paused = state.status === 'PAUSED';
   const blocked = state.status === 'FAIL' && result?.category === 'blocked';
   const guidance = checkGuidance(target, check, state);
+  const verdict = checkVerdict(state);
   return (
     <div
       className={`check-row row-${state.status.toLowerCase()} ${blocked ? 'row-blocked' : ''} ${selected ? 'selected' : ''}`}
@@ -57,6 +59,19 @@ export const CheckRow = memo(function CheckRow({
               <HeldFor since={state.statusSince} />
             </em>
           )
+        )}
+        {verdict === 'broke' && (
+          <em className="verdict-pill verdict-broke" title="Passed before this session, fails now">
+            Broke
+          </em>
+        )}
+        {verdict === 'recovered' && (
+          <em
+            className="verdict-pill verdict-recovered"
+            title="Failed before this session, passes now"
+          >
+            Recovered
+          </em>
         )}
       </span>
       <span className="diagnostic" title={state.activity ? guidance.explanation : result?.summary}>

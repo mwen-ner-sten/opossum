@@ -23,11 +23,13 @@ import {
 } from '@core/models';
 import type { AppSnapshot, TimelineRange } from '@shared/contracts';
 import { missingTemplateVariables } from '@core/templates';
+import { checkVerdict, summarizeVerdicts, verdictReport, type Verdict } from '@core/verdict';
 import { StatusBadge } from '../../components/StatusBadge';
 import { CheckRow } from './CheckRow';
 import { DetailPanel, type SelectedCheck } from './DetailPanel';
 import { countStatuses, keyFor, summarizeStatuses } from './format';
 import { TargetSummary } from './TargetSummary';
+import { VerdictBar } from './VerdictBar';
 
 const PIP_ORDER: CheckStatus[] = ['FAIL', 'CHECKING', 'UNKNOWN', 'PASS', 'PAUSED'];
 
@@ -69,6 +71,7 @@ export function MonitorView({
   const [collapsedTargets, setCollapsedTargets] = useState<Set<string>>(
     () => new Set(JSON.parse(localStorage.getItem('collapsedTargets') ?? '[]') as string[]),
   );
+  const [verdictFilter, setVerdictFilter] = useState<Verdict | 'all'>('all');
   const [selection, setSelected] = useState<SelectedCheck>();
   const selectedTarget = snapshot.targets.find((target) => target.id === selection?.target.id);
   const selected = useMemo(
@@ -178,6 +181,7 @@ export function MonitorView({
       (groupFilter === 'all' || (target.group || 'Ungrouped') === groupFilter) &&
       (statusFilter === 'all' || stateOf(target, check).status === statusFilter) &&
       (typeFilter === 'all' || check.type === typeFilter) &&
+      (verdictFilter === 'all' || checkVerdict(stateOf(target, check)) === verdictFilter) &&
       haystack.includes(search.toLowerCase())
     );
   };
@@ -189,13 +193,29 @@ export function MonitorView({
     onNotice(`${label} copied`);
   };
   const filtering =
-    search !== '' || statusFilter !== 'all' || typeFilter !== 'all' || groupFilter !== 'all';
+    search !== '' ||
+    statusFilter !== 'all' ||
+    typeFilter !== 'all' ||
+    groupFilter !== 'all' ||
+    verdictFilter !== 'all';
   const clearFilters = (): void => {
     setSearch('');
     setTypeFilter('all');
     setGroupFilter('all');
+    setVerdictFilter('all');
     onStatusFilter('all');
   };
+  const verdicts = useMemo(() => summarizeVerdicts(snapshot.states), [snapshot.states]);
+  const copyVerdict = (): Promise<void> =>
+    copy(
+      verdictReport(
+        snapshot.targets.flatMap((target) =>
+          target.checks.map((check) => ({ target, check, state: stateOf(target, check) })),
+        ),
+        new Date().toISOString(),
+      ),
+      'Verdict',
+    );
   const totalChecks = snapshot.targets.reduce((sum, target) => sum + target.checks.length, 0);
   const incompleteTargets = useMemo(
     () =>
@@ -232,6 +252,12 @@ export function MonitorView({
             ))}
           </section>
         )}
+        <VerdictBar
+          summary={verdicts}
+          activeFilter={verdictFilter}
+          onFilter={setVerdictFilter}
+          onCopy={() => void copyVerdict().catch(() => onError('Could not copy the verdict'))}
+        />
         <section className="filterbar" aria-label="Monitor filters">
           <label className="search">
             <Search size={16} />
