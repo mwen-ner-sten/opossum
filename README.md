@@ -12,6 +12,7 @@ OPOSSUM is a local, on-demand Windows endpoint monitor. Open it to check hosts, 
 - Supports manual runs and session-only pause/resume controls. Pausing everything keeps individually paused checks paused when monitoring resumes.
 - Schedules each check from the start of its previous run, so a slow or failing endpoint does not stretch its own interval.
 - Optionally requires several consecutive failures before a check turns FAIL (`failures_before_fail`), so one lost packet does not create a new history interval.
+- Shows what broke since the previous session, for quick checks after a patch window.
 - Stores configuration, sessions, compressed status intervals, and last-known results in local SQLite.
 - Shows previous sessions and explicitly renders time between sessions as **Not monitoring**.
 - Imports and exports deterministic YAML configuration without exporting results or resolved secrets.
@@ -147,6 +148,18 @@ Every import is parsed and validated before a write begins. The preview reports 
 A canceled or invalid import changes nothing. A successful import is transactional and newly enabled checks are scheduled immediately.
 
 Exports include active configuration and application defaults only. They are sorted by target and check ID for useful source-control diffs. Use the top toolbar for all targets or **Configuration → Export target** for one target.
+
+## After a patch: what broke?
+
+Run OPOSSUM once before a patch window and close it; open it again afterwards. The banner above the monitor compares every check's result this session with its last result before the session opened:
+
+- **Broke**: passed before, fails now. These are the ones to chase.
+- **Not run, prerequisite failing**: blocked by a failing `depends_on` check, so one dead host counts as one breakage rather than one per dependent check.
+- **Still failing** / **Failing, no earlier result**: were already down, or have never been checked before.
+- **Recovered**: failed before, passes now.
+- **Not checked yet**: no result in this session so far. Paused checks are left out.
+
+Click a count to show only those checks. **Copy verdict** puts a plain-text summary on the clipboard for the change ticket: the headline, counts, the time span of the earlier results, and every check that broke, is still failing, was not run, recovered, or has not been checked yet. The earlier result is fixed for the whole session. A check whose host or settings are edited during the session loses its earlier result, because the old one no longer describes the same probe. If a host is still rebooting when OPOSSUM opens, it shows as broke until it answers again.
 
 ## Sessions, history, and availability
 
