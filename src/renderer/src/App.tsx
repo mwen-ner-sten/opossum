@@ -235,7 +235,7 @@ export function App() {
     try {
       if (snapshot.pausedAll) await window.opossum.resumeAll();
       else await window.opossum.pauseAll();
-      setSnapshot({ ...snapshot, pausedAll: !snapshot.pausedAll });
+      await load();
     } catch (caught) {
       setError(displayError(caught));
     }
@@ -435,6 +435,12 @@ export function App() {
             onDuplicate={(target) => setEditor({ target, duplicate: true })}
             onDelete={setDeleting}
             onNotice={showNotice}
+            onOpenData={() => setView('data')}
+            onError={showError}
+            onResumeAll={async () => {
+              await window.opossum.resumeAll();
+              await load();
+            }}
           />
         ) : view === 'history' ? (
           <HistoryView

@@ -172,6 +172,8 @@ export interface OpossumApi {
   deleteTemplate(templateId: string): Promise<void>;
   exportConfiguration(options: ExportOptions): Promise<string | undefined>;
   getSessions(options?: SessionsOptions): Promise<SessionSummary[]>;
+  getSessionSummary(sessionId: string): Promise<string>;
+  exportSessionCsv(sessionId: string): Promise<string | undefined>;
   getTimeline(options: TimelineOptions): Promise<TimelineResult>;
   getDatabaseStats(): Promise<DatabaseStats>;
   previewHistoryPurge(options: PurgeOptions): Promise<PurgePreview>;

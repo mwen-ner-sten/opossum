@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, CalendarClock, Trash2 } from 'lucide-react';
+import { ArrowRight, CalendarClock, Copy, Download, Trash2 } from 'lucide-react';
 import type { TargetConfig } from '@core/config';
 import type { SessionSummary, TimelineResult } from '@core/models';
 import type { HistoricalDefinition, PurgePreview } from '@shared/contracts';
@@ -37,6 +37,27 @@ export function HistoryView({
   const [inspectTargetId, setInspectTargetId] = useState('');
   const [inspectCheckId, setInspectCheckId] = useState('');
   const [timeline, setTimeline] = useState<TimelineResult>();
+  const [reportBusy, setReportBusy] = useState(false);
+  const reportSessionId = inspectSessionId || sessions[0]?.id;
+  const shareReport = async (format: 'summary' | 'csv'): Promise<void> => {
+    if (!reportSessionId) return;
+    setReportBusy(true);
+    try {
+      if (format === 'summary') {
+        await navigator.clipboard.writeText(
+          await window.opossum.getSessionSummary(reportSessionId),
+        );
+        onNotice('Session summary copied');
+      } else {
+        const path = await window.opossum.exportSessionCsv(reportSessionId);
+        if (path) onNotice(`Session intervals exported to ${path}`);
+      }
+    } catch (error) {
+      onError(describe(error));
+    } finally {
+      setReportBusy(false);
+    }
+  };
   const load = (): void => {
     window.opossum
       .getSessions({ limit: 500 })
@@ -113,6 +134,46 @@ export function HistoryView({
         )}
       </div>
       <div className="history-list">
+        {sessions.length > 0 && (
+          <section className="settings-card session-report" aria-label="Share session results">
+            <h2>Share session results</h2>
+            <p>
+              Copy failures and blocked checks, or export all retained status intervals. Times use
+              UTC; names and hosts reflect the retained configuration.
+            </p>
+            <div className="session-inspector-controls">
+              <label>
+                <span>Report session</span>
+                <select
+                  value={reportSessionId}
+                  onChange={(event) => setInspectSessionId(event.target.value)}
+                >
+                  {sessions.map((session) => (
+                    <option key={session.id} value={session.id}>
+                      {session.endedAt
+                        ? new Date(session.startedAt).toLocaleString()
+                        : 'Current session'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="button secondary"
+                disabled={reportBusy}
+                onClick={() => void shareReport('summary')}
+              >
+                <Copy size={15} /> Copy session summary
+              </button>
+              <button
+                className="button secondary"
+                disabled={reportBusy}
+                onClick={() => void shareReport('csv')}
+              >
+                <Download size={15} /> Export session CSV
+              </button>
+            </div>
+          </section>
+        )}
         <div className="history-head">
           <span></span>
           <span>Session</span>

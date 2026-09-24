@@ -4,6 +4,7 @@ import { assessCapacity } from '@core/capacity';
 import { autoDetectMapping, buildTargetsFromRows } from '@core/import-mapping';
 import { resolveChecksPartial, validateTemplate } from '@core/templates';
 import { Scheduler } from '@core/scheduler';
+import { sessionCsv, sessionText } from '@core/reports';
 import { addOfflineGaps, aggregateTargetTimeline, observedAvailability } from '@core/timeline';
 import type { LiveCheckState, SessionSummary, TimelineResult } from '@core/models';
 import type {
@@ -120,18 +121,24 @@ export class ApplicationService {
         );
       }
     }
-    this.scheduler = new Scheduler(settings, targets, this.repositories.getLastKnownStates(), {
-      onStatesChanged: (states) => this.events.status(states),
-      onResult: (targetId, checkId, result) => {
-        this.repositories.recordResult(this.session.id, targetId, checkId, result);
-        this.notePersistenceSuccess();
+    this.scheduler = new Scheduler(
+      settings,
+      targets,
+      this.repositories.getLastKnownStates(),
+      {
+        onStatesChanged: (states) => this.events.status(states),
+        onResult: (targetId, checkId, result) => {
+          this.repositories.recordResult(this.session.id, targetId, checkId, result);
+          this.notePersistenceSuccess();
+        },
+        onPaused: (targetId, checkId) => {
+          this.repositories.recordPaused(this.session.id, targetId, checkId);
+          this.notePersistenceSuccess();
+        },
+        onError: (context, error) => this.notePersistenceFailure(context, error),
       },
-      onPaused: (targetId, checkId) => {
-        this.repositories.recordPaused(this.session.id, targetId, checkId);
-        this.notePersistenceSuccess();
-      },
-      onError: (context, error) => this.notePersistenceFailure(context, error),
-    });
+      { publishIntervalMs: 100 },
+    );
     this.maintenance = new MaintenanceEngine(
       this.repositories,
       (summary) => this.events.maintenance(summary),
@@ -488,6 +495,17 @@ export class ApplicationService {
 
   getStats(): DatabaseStats {
     return this.repositories.getDatabaseStats();
+  }
+
+  getSessionReport(sessionId: string): { summary: string; csv: string } {
+    const session = this.repositories.sessions.get(sessionId);
+    if (!session) throw new OpossumError('NOT_FOUND', 'This session is no longer retained.');
+    const endAt =
+      session.endedAt ??
+      session.inferredEndAt ??
+      (session.id === this.session.id ? new Date().toISOString() : session.lastHeartbeatAt);
+    const rows = this.repositories.history.sessionReport(sessionId, endAt);
+    return { summary: sessionText(session, rows, endAt), csv: sessionCsv(session, rows) };
   }
 
   async shutdown(): Promise<void> {

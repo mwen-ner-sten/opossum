@@ -79,6 +79,8 @@ On first run a dependent waits until its precursors have produced a result. Prec
 
 ## Backoff and capacity
 
+**Live changes.** Changing the default interval reschedules checks that inherit it immediately; explicit per-check intervals remain independent. Manual requests for an already queued check coalesce into one run. Editing a host or check cancels its old in-flight work and discards that obsolete result; deleting a check removes its queued work. Dependency waits are re-evaluated when configuration changes or a prerequisite is paused.
+
 **Failure backoff.** After a check crosses its `failures_before_fail` threshold, every further failure doubles its interval, up to `failure_backoff_max_seconds` (default 600, 0 disables). A site that has been down for an hour is probed every ten minutes instead of every minute; the first success restores the normal interval. The monitor marks such checks with _backoff_ and the detail panel shows the current spacing.
 
 **Capacity check.** The default interval is 60 seconds. **Data & history → Monitoring defaults** shows a capacity assessment that multiplies each check's timeout by its launch rate to estimate how many checks would be in flight if everything timed out at once, and compares that with `max_concurrent_checks`. A warning appears in the top bar when headroom is thin, with a suggested concurrency (or a longer default interval when the 200-check cap would not be enough). The import builder shows the same projection for the configuration as it would look after the import.
@@ -148,6 +150,10 @@ Exports include active configuration and application defaults only. They are sor
 
 ## Sessions, history, and availability
 
+**Share session results.** In **History**, choose a **Report session**, then **Copy session summary** or **Export session CSV**. The summary lists failure and blocked intervals. CSV contains all retained intervals, including PASS, FAIL, BLOCKED, UNKNOWN, and PAUSED, with target/check identities, UTC start/end times, duration, observation count, and diagnostic text. Blocked means no probe was attempted. Open sessions are captured up to export time; deleted definitions remain included when they have history. Names and hosts reflect the retained configuration at export time, and purged history cannot be reconstructed. These reports describe observed status, not continuous SLA uptime. CSV text is escaped and spreadsheet formula prefixes are neutralized.
+
+**Understand a check.** Open a check's details for an explanation of queued work, prerequisites, failure confirmation, backoff, pauses, and authentication problems. Actions lead to capacity settings, the prerequisite check, target configuration, or a retry/resume. Targets missing template variables appear in a setup panel on the monitor, even when they have no runnable checks.
+
 Each launch creates a new monitoring session with a 30-second heartbeat. Clean shutdown closes active status intervals after checks are canceled or given a short grace period. On the next launch, an interrupted session ends shortly after its final heartbeat and is marked as unclean.
 
 OPOSSUM stores status intervals instead of one row for every successful poll. An interval continues while status and diagnostic category remain stable, accumulating observation count and duration statistics. A transition or materially different failure category begins a new interval.
@@ -189,9 +195,12 @@ Quality checks:
 npm run check          # format:check + lint + typecheck + unit/integration tests
 npm run test:coverage  # same tests with the 80% coverage gate used in CI
 npm run test:e2e       # builds, then drives the packaged renderer with Playwright
+npm run test:scale     # simulated 100/500-site recovery and a live 500-target UI check
 ```
 
 Tests use temporary SQLite databases, a mocked `ping.exe`, and local TCP/HTTP servers. They do not require public internet access. The GitHub Actions workflow in `.github/workflows/ci.yml` runs the same steps on `windows-latest` and uploads the portable build.
+
+The scale tests simulate 100 and 500 sites with three checks per site, verifying outage blocking, recovery, no overlap, and a 20-check concurrency limit. The app coalesces screen snapshots at 100 ms intervals while persisting every completed observation, and skips layout of off-screen target rows. A separate Electron test imports and monitors 500 local HTTP targets, checks that filtering settles within five seconds, and attaches timing measurements. These are repeatable development checks, not a guarantee of throughput on every network or machine.
 
 Build the portable application:
 

@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test';
@@ -168,4 +169,198 @@ test('templates drive linked targets and the import builder creates sites from p
       .getByRole('complementary', { name: 'Check details' })
       .getByText('https://10.20.40.40:443/'),
   ).toBeVisible();
+});
+
+// Electron launches its own window; Playwright requires destructuring even without browser fixtures.
+// eslint-disable-next-line no-empty-pattern
+test('guidance, missing template values, and session sharing work through the app', async ({}, testInfo) => {
+  const window = await launch();
+  const originalClipboard = await application!.evaluate(({ clipboard }) => clipboard.readText());
+  const server = createServer((_req, res) => {
+    res.writeHead(503);
+    res.end('Unavailable');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('No HTTP port');
+  try {
+    await window.evaluate(async (port) => {
+      await globalThis.window.opossum.saveTarget({
+        id: 'local-service',
+        name: 'Local service',
+        host: '127.0.0.1',
+        enabled: true,
+        checks: [
+          {
+            id: 'web',
+            name: 'Web',
+            type: 'http',
+            url: `http://127.0.0.1:${port}`,
+            method: 'GET',
+            expected_status: 200,
+            headers: {},
+            follow_redirects: true,
+            verify_tls: true,
+            enabled: true,
+            tags: [],
+          },
+        ],
+      });
+      await globalThis.window.opossum.saveTemplate({
+        id: 'missing',
+        name: 'Missing values',
+        checks: [
+          {
+            id: 'web',
+            name: 'Web',
+            type: 'http',
+            url: 'https://{{host}}/{{vars.path}}',
+            method: 'GET',
+            expected_status: 200,
+            headers: {},
+            follow_redirects: true,
+            verify_tls: true,
+            enabled: true,
+            tags: [],
+          },
+        ],
+      });
+      await globalThis.window.opossum.saveTarget({
+        id: 'unfinished',
+        name: 'Unfinished site',
+        host: 'localhost',
+        enabled: true,
+        template: 'missing',
+        checks: [],
+      });
+    }, address.port);
+    await expect(
+      window.getByRole('button', { name: 'Configure Unfinished site — needs path' }),
+    ).toBeVisible();
+    await window.getByRole('button', { name: 'Configure Unfinished site — needs path' }).click();
+    await expect(window.getByRole('dialog')).toBeVisible();
+    await window.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await window.getByRole('button', { name: 'Show details for Local service Web' }).click();
+    const details = window.getByRole('complementary', { name: 'Check details' });
+    await expect(details.getByText('Endpoint check failed', { exact: true })).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Review configuration' })).toBeVisible();
+    const filterBounds = await window.getByLabel('Filter by check type').boundingBox();
+    const panelBounds = await details.boundingBox();
+    expect(filterBounds!.x + filterBounds!.width).toBeLessThanOrEqual(panelBounds!.x);
+    await window.getByRole('button', { name: 'Pause all', exact: true }).click();
+    await details.getByRole('button', { name: 'Resume monitoring', exact: true }).click();
+    await expect(window.getByRole('button', { name: 'Pause all', exact: true })).toBeVisible();
+    await expect(details.getByText('Endpoint check failed', { exact: true })).toBeVisible();
+    await window.screenshot({ path: testInfo.outputPath('check-guidance.png') });
+    await window.getByRole('button', { name: 'History', exact: true }).click();
+    await window.getByRole('button', { name: 'Copy session summary' }).click();
+    await expect(window.getByText('Session summary copied', { exact: true })).toBeVisible();
+    const copied = await application!.evaluate(({ clipboard }) => clipboard.readText());
+    expect(copied).toContain('Local service (127.0.0.1) / Web');
+    expect(copied).toContain('HTTP 503');
+    const csvPath = join(dataRoot, 'session.csv');
+    // Choose a temporary destination through a stub of the native save dialog.
+    await application!.evaluate(({ dialog }, filePath) => {
+      dialog.showSaveDialog = () => Promise.resolve({ canceled: false, filePath });
+    }, csvPath);
+    await window.getByRole('button', { name: 'Export session CSV' }).click();
+    await expect(window.getByText(/Session intervals exported/)).toBeVisible();
+    expect(readFileSync(csvPath, 'utf8')).toContain('HTTP 503');
+    await window.screenshot({ path: testInfo.outputPath('session-report.png') });
+  } finally {
+    await application!.evaluate(
+      ({ clipboard }, text) => clipboard.writeText(text),
+      originalClipboard,
+    );
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+// eslint-disable-next-line no-empty-pattern
+test('500 targets remain searchable while monitoring local HTTP endpoints', async ({}, testInfo) => {
+  test.setTimeout(120_000);
+  const window = await launch();
+  const errors: string[] = [];
+  window.on('pageerror', (error) => errors.push(error.message));
+  const server = createServer((_req, res) => {
+    res.end('OK');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('No HTTP port');
+  try {
+    const start = Date.now();
+    await window.evaluate(async (port) => {
+      await globalThis.window.opossum.saveTemplate({
+        id: 'local-web',
+        name: 'Local web',
+        checks: [
+          {
+            id: 'web',
+            name: 'Web',
+            type: 'http',
+            url: `http://{{host}}:${port}`,
+            method: 'GET',
+            expected_status: 200,
+            headers: {},
+            follow_redirects: true,
+            verify_tls: true,
+            enabled: true,
+            tags: [],
+          },
+        ],
+      });
+      await globalThis.window.opossum.applyTableImport({
+        text:
+          'Name,Host\n' +
+          Array.from(
+            { length: 500 },
+            (_, i) => `Site ${String(i).padStart(3, '0')},127.0.0.1`,
+          ).join('\n'),
+        mapping: {
+          columns: { name: 'Name', host: 'Host' },
+          defaults: { template: 'local-web' },
+          vars: {},
+        },
+        mode: 'add-only',
+      });
+    }, address.port);
+    await expect
+      .poll(
+        () =>
+          window.evaluate(
+            async () =>
+              (await globalThis.window.opossum.getSnapshot()).states.filter(
+                (s) => s.status === 'PASS',
+              ).length,
+          ),
+        { timeout: 30_000 },
+      )
+      .toBe(500);
+    const loadedMs = Date.now() - start;
+    const filterStart = Date.now();
+    await window.getByRole('textbox', { name: 'Search targets and checks' }).fill('Site 499');
+    await expect(window.getByRole('button', { name: /Show details for Site/ })).toHaveCount(1);
+    const filteredMs = Date.now() - filterStart;
+    expect(filteredMs).toBeLessThan(5000);
+    await window.getByRole('button', { name: 'Show details for Site 499 Web' }).click();
+    await expect(window.getByRole('complementary', { name: 'Check details' })).toBeVisible();
+    expect(errors).toEqual([]);
+    const measurement = {
+      targets: 500,
+      checks: 500,
+      loadedAndObservedMs: loadedMs,
+      filterMs: filteredMs,
+    };
+    console.info('Renderer scale:', measurement);
+    await testInfo.attach('scale-measurement', {
+      body: JSON.stringify(measurement),
+      contentType: 'application/json',
+    });
+    await window.screenshot({ path: testInfo.outputPath('scale-monitor.png') });
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

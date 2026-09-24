@@ -45,6 +45,9 @@ export function MonitorView({
   onDuplicate,
   onDelete,
   onNotice,
+  onOpenData,
+  onError,
+  onResumeAll,
 }: {
   snapshot: AppSnapshot;
   statusFilter: string;
@@ -53,6 +56,9 @@ export function MonitorView({
   onDuplicate(target: TargetConfig): void;
   onDelete(target: TargetConfig): void;
   onNotice(message: string): void;
+  onOpenData(): void;
+  onError(message: string): void;
+  onResumeAll(): Promise<void>;
 }) {
   const [search, setSearch] = useStoredValue('filter.search', '');
   const [typeFilter, setTypeFilter] = useStoredValue('filter.type', 'all');
@@ -63,7 +69,15 @@ export function MonitorView({
   const [collapsedTargets, setCollapsedTargets] = useState<Set<string>>(
     () => new Set(JSON.parse(localStorage.getItem('collapsedTargets') ?? '[]') as string[]),
   );
-  const [selected, setSelected] = useState<SelectedCheck>();
+  const [selection, setSelected] = useState<SelectedCheck>();
+  const selectedTarget = snapshot.targets.find((target) => target.id === selection?.target.id);
+  const selected = useMemo(
+    () =>
+      selection && selectedTarget
+        ? { target: selectedTarget, checkId: selection.checkId }
+        : undefined,
+    [selection, selectedTarget],
+  );
   const [range, setRange] = useState<TimelineRange>('current');
   const [timeline, setTimeline] = useState<TimelineResult>();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -75,7 +89,9 @@ export function MonitorView({
     const result = new Map<string, TargetConfig[]>();
     for (const target of snapshot.targets) {
       const name = target.group || 'Ungrouped';
-      result.set(name, [...(result.get(name) ?? []), target]);
+      const group = result.get(name);
+      if (group) group.push(target);
+      else result.set(name, [target]);
     }
     return [...result.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [snapshot.targets]);
@@ -181,6 +197,17 @@ export function MonitorView({
     onStatusFilter('all');
   };
   const totalChecks = snapshot.targets.reduce((sum, target) => sum + target.checks.length, 0);
+  const incompleteTargets = useMemo(
+    () =>
+      snapshot.targets.flatMap((target) => {
+        const missing = missingTemplateVariables(
+          target,
+          snapshot.templates.find((item) => item.id === target.template),
+        );
+        return missing.length ? [{ target, missing }] : [];
+      }),
+    [snapshot.targets, snapshot.templates],
+  );
   const groupNames = groups.map(([group]) => group);
   const allTargetIds = snapshot.targets.map((target) => target.id);
   const visibleChecks = snapshot.targets.reduce(
@@ -191,6 +218,20 @@ export function MonitorView({
   return (
     <div className={`workspace monitor-workspace ${selected ? 'with-details' : ''}`}>
       <div className="workspace-main">
+        {incompleteTargets.length > 0 && (
+          <section className="configuration-needs" aria-label="Incomplete targets">
+            <h2>
+              Finish setting up {incompleteTargets.length} target
+              {incompleteTargets.length === 1 ? '' : 's'}
+            </h2>
+            <p>Some inherited checks cannot run until these values are provided.</p>
+            {incompleteTargets.map(({ target, missing }) => (
+              <button key={target.id} className="button secondary" onClick={() => onEdit(target)}>
+                Configure {target.name} — needs {missing.join(', ')}
+              </button>
+            ))}
+          </section>
+        )}
         <section className="filterbar" aria-label="Monitor filters">
           <label className="search">
             <Search size={16} />
@@ -490,7 +531,7 @@ export function MonitorView({
               <p>Add your first endpoint to begin checking it while OPOSSUM is open.</p>
             </div>
           )}
-          {groups.length > 0 && visibleChecks === 0 && (
+          {groups.length > 0 && totalChecks > 0 && visibleChecks === 0 && (
             <div className="empty-state">
               <h2>Nothing matches these filters</h2>
               <p>Every check is hidden by the current search or filter selection.</p>
@@ -511,6 +552,12 @@ export function MonitorView({
           onRange={setRange}
           onClose={() => setSelected(undefined)}
           onCopy={copy}
+          pausedAll={snapshot.pausedAll}
+          onEdit={() => onEdit(selected.target)}
+          onOpenData={onOpenData}
+          onDependency={(checkId) => setSelected({ target: selected.target, checkId })}
+          onError={onError}
+          onResumeAll={onResumeAll}
         />
       )}
     </div>

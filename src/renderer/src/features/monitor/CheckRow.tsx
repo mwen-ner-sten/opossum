@@ -6,6 +6,7 @@ import { HeldFor } from '../../components/HeldFor';
 import { RelativeTime } from '../../components/RelativeTime';
 import { StatusBadge } from '../../components/StatusBadge';
 import { formatDuration, latencyRatio } from './format';
+import { checkGuidance } from '@core/check-guidance';
 
 export const CheckRow = memo(function CheckRow({
   target,
@@ -27,6 +28,7 @@ export const CheckRow = memo(function CheckRow({
   const heat = ratio > 0.75 ? 'hot' : ratio > 0.4 ? 'warm' : '';
   const paused = state.status === 'PAUSED';
   const blocked = state.status === 'FAIL' && result?.category === 'blocked';
+  const guidance = checkGuidance(target, check, state);
   return (
     <div
       className={`check-row row-${state.status.toLowerCase()} ${blocked ? 'row-blocked' : ''} ${selected ? 'selected' : ''}`}
@@ -57,9 +59,11 @@ export const CheckRow = memo(function CheckRow({
           )
         )}
       </span>
-      <span className="diagnostic" title={result?.summary}>
-        {result?.summary ??
-          (state.status === 'CHECKING' ? 'Check in progress…' : 'No result this session')}
+      <span className="diagnostic" title={state.activity ? guidance.explanation : result?.summary}>
+        {state.activity
+          ? guidance.title
+          : (result?.summary ??
+            (state.status === 'CHECKING' ? 'Check in progress…' : 'No result this session'))}
       </span>
       <span className="latency">
         <span>{blocked ? 'Not run' : formatDuration(result?.durationMs)}</span>
@@ -74,6 +78,10 @@ export const CheckRow = memo(function CheckRow({
         <small>
           {state.nextRunAt ? (
             <RelativeTime value={state.nextRunAt} prefix="Next " />
+          ) : state.activity === 'queued' ? (
+            'Waiting for capacity'
+          ) : state.activity === 'dependencies' ? (
+            'Waiting for prerequisite'
           ) : (
             'No run queued'
           )}
