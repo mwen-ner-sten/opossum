@@ -80,26 +80,42 @@ const plural = (count: number): string => `${count} check${count === 1 ? '' : 's
 
 export interface VerdictHeadline {
   tone: 'bad' | 'warn' | 'pending' | 'good' | 'none';
+  /** The go/no-go call: NO GO on any regression, REVIEW when known failures remain. */
+  word: 'NO GO' | 'REVIEW' | 'GO' | 'CHECKING' | '';
   text: string;
 }
 
 export function verdictHeadline(summary: VerdictSummary): VerdictHeadline {
   const { counts, active } = summary;
-  if (active === 0) return { tone: 'none', text: 'No active checks' };
+  if (active === 0) return { tone: 'none', word: '', text: 'No active checks' };
   if (counts.broke > 0)
-    return { tone: 'bad', text: `${plural(counts.broke)} broke since last session` };
+    return {
+      tone: 'bad',
+      word: 'NO GO',
+      text: `${plural(counts.broke)} broke since last session`,
+    };
   if (counts.pending > 0)
     return {
       tone: 'pending',
+      word: 'CHECKING',
       text: `Checking… ${active - counts.pending} of ${plural(active)} have a result`,
     };
   const failing = counts.still_failing + counts.new_failure + counts.blocked;
+  // With no earlier results there is nothing to compare against, so claim no comparison.
+  const compared = summary.baselineFrom !== undefined;
   if (failing > 0)
     return {
       tone: 'warn',
-      text: `Nothing broke since last session · ${plural(failing)} still failing`,
+      word: 'REVIEW',
+      text: compared
+        ? `Nothing broke since last session · ${plural(failing)} still failing`
+        : `${plural(failing)} failing`,
     };
-  return { tone: 'good', text: 'Everything that passed before passes now' };
+  return {
+    tone: 'good',
+    word: 'GO',
+    text: compared ? 'Everything that passed before passes now' : 'Everything passes',
+  };
 }
 
 export interface VerdictItem {
@@ -127,9 +143,10 @@ export function verdictReport(items: readonly VerdictItem[], now: string): strin
         `${summary.counts[verdict]} ${verdict === 'ok' ? 'OK' : VERDICT_LABELS[verdict].toLowerCase()}`,
     )
     .join(' · ');
+  const headline = verdictHeadline(summary);
   const lines = [
-    `OPOSSUM post-patch check, ${now}`,
-    verdictHeadline(summary).text,
+    `OPOSSUM post-patch check, ${now}${headline.word ? `: ${headline.word}` : ''}`,
+    headline.text,
     counts,
     summary.baselineFrom
       ? `Compared with each check's last result before this session (${summary.baselineFrom} to ${summary.baselineTo}).`

@@ -2,7 +2,13 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test';
+import {
+  _electron as electron,
+  expect,
+  test,
+  type ElectronApplication,
+  type Page,
+} from '@playwright/test';
 
 let application: ElectronApplication | undefined;
 let dataRoot: string;
@@ -28,6 +34,13 @@ async function launch() {
   return window;
 }
 
+// The board starts with one line per target and healthy targets folded; tests that inspect
+// individual check rows open everything first.
+async function expandEverything(window: Page) {
+  await window.locator('.view-menu summary').click();
+  await window.getByRole('menuitem', { name: 'Expand everything' }).click();
+}
+
 test('first run, local monitoring, clean close, and last-known restoration', async () => {
   let window = await launch();
   await expect(window.getByRole('heading', { name: /Know what is reachable/i })).toBeVisible();
@@ -44,6 +57,7 @@ test('first run, local monitoring, clean close, and last-known restoration', asy
   await expect(checkId).toHaveValue('loopback-ping');
   await dialog.getByRole('button', { name: 'Save target' }).click();
   await expect(window.getByText('Local machine').first()).toBeVisible();
+  await expandEverything(window);
   await expect(window.getByText(/Reply in|No ICMP reply|Timed out/).first()).toBeVisible({
     timeout: 10_000,
   });
@@ -59,6 +73,7 @@ test('first run, local monitoring, clean close, and last-known restoration', asy
 
   window = await launch();
   await expect(window.getByText('Local machine').first()).toBeVisible();
+  await expandEverything(window);
   await expect(window.getByText('Last known').first()).toBeVisible({ timeout: 5_000 });
   // The last-known result must be the genuine reply, never a shutdown cancellation.
   await expect(window.getByText(/canceled/i)).toHaveCount(0);
@@ -71,6 +86,7 @@ test('example configuration loads and pause all preserves an individual pause', 
   await expect(dialog.getByText('new targets')).toBeVisible();
   await dialog.getByRole('button', { name: /Add only new items/ }).click();
   await expect(window.getByText('Chicago BMS Server 01').first()).toBeVisible();
+  await expandEverything(window);
 
   await window.getByRole('button', { name: 'Pause Host ping' }).first().click();
   // A pause requested mid-run takes effect when the in-flight ping finishes (up to its 5 s
@@ -161,6 +177,7 @@ test('templates drive linked targets and the import builder creates sites from p
   await window.getByRole('button', { name: /^Monitor/ }).click();
   await expect(window.getByText('Phoenix BMS 01').first()).toBeVisible();
   await expect(window.getByText('phoenix-bms-01')).toHaveCount(0);
+  await expandEverything(window);
   await window
     .getByRole('button', { name: /Show details for Phoenix BMS 01 EBO WebStation/ })
     .click();
@@ -240,6 +257,7 @@ test('guidance, missing template values, and session sharing work through the ap
     await window.getByRole('button', { name: 'Configure Unfinished site — needs path' }).click();
     await expect(window.getByRole('dialog')).toBeVisible();
     await window.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expandEverything(window);
     await window.getByRole('button', { name: 'Show details for Local service Web' }).click();
     const details = window.getByRole('complementary', { name: 'Check details' });
     await expect(details.getByText('Endpoint check failed', { exact: true })).toBeVisible();
@@ -314,7 +332,7 @@ test('the verdict compares each check with its result before the session', async
       [http('web', 'WebStation', '/'), http('steady', 'Steady', '/steady')],
     );
     // No earlier session yet: passing checks are simply OK.
-    await expect(window.getByText('Everything that passed before passes now')).toBeVisible({
+    await expect(window.getByText('Everything passes', { exact: true })).toBeVisible({
       timeout: 15_000,
     });
     const closed = application!.waitForEvent('close');
@@ -331,7 +349,10 @@ test('the verdict compares each check with its result before the session', async
     });
     await expect(window.locator('.verdict-pill', { hasText: 'Broke' })).toHaveCount(1);
     await window.getByRole('button', { name: /1 Broke/ }).click();
-    await expect(window.getByText('WebStation', { exact: true })).toBeVisible();
+    // The verdict filter opens matching targets, so the check row itself is listed.
+    await expect(
+      window.getByRole('button', { name: 'Show details for BMS server WebStation' }),
+    ).toBeVisible();
     await expect(window.getByText('Steady', { exact: true })).toHaveCount(0);
     await window.getByRole('button', { name: /Copy verdict/ }).click();
     await expect

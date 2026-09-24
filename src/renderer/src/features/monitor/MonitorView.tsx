@@ -6,29 +6,26 @@ import {
   ChevronsUpDown,
   CircleAlert,
   LayoutList,
-  Copy,
-  Download,
-  RotateCw,
   Search,
   Server,
-  Settings2,
   X,
 } from 'lucide-react';
 import type { CheckConfig, TargetConfig } from '@core/config';
-import {
-  aggregateStatus,
-  type CheckStatus,
-  type LiveCheckState,
-  type TimelineResult,
-} from '@core/models';
+import { type CheckStatus, type LiveCheckState, type TimelineResult } from '@core/models';
 import type { AppSnapshot, TimelineRange } from '@shared/contracts';
 import { missingTemplateVariables } from '@core/templates';
 import { checkVerdict, summarizeVerdicts, verdictReport, type Verdict } from '@core/verdict';
-import { StatusBadge } from '../../components/StatusBadge';
-import { CheckRow } from './CheckRow';
 import { DetailPanel, type SelectedCheck } from './DetailPanel';
-import { countStatuses, keyFor, summarizeStatuses } from './format';
-import { TargetSummary } from './TargetSummary';
+import {
+  byHealth,
+  countLevels,
+  foldHealthy,
+  HEALTH_ORDER,
+  targetHealth,
+  worstLevel,
+} from './board';
+import { keyFor } from './format';
+import { TargetBlock } from './TargetBlock';
 import { VerdictBar } from './VerdictBar';
 
 const PIP_ORDER: CheckStatus[] = ['FAIL', 'CHECKING', 'UNKNOWN', 'PASS', 'PAUSED'];
@@ -68,8 +65,12 @@ export function MonitorView({
   const [collapsed, setCollapsed] = useState<Set<string>>(
     () => new Set(JSON.parse(localStorage.getItem('collapsedGroups') ?? '[]') as string[]),
   );
-  const [collapsedTargets, setCollapsedTargets] = useState<Set<string>>(
-    () => new Set(JSON.parse(localStorage.getItem('collapsedTargets') ?? '[]') as string[]),
+  const [healthyShown, setHealthyShown] = useState<Set<string>>(
+    () => new Set(JSON.parse(localStorage.getItem('healthyShownGroups') ?? '[]') as string[]),
+  );
+  // Targets start as one line each; expanding one shows its check rows.
+  const [expandedTargets, setExpandedTargets] = useState<Set<string>>(
+    () => new Set(JSON.parse(localStorage.getItem('expandedTargets') ?? '[]') as string[]),
   );
   const [verdictFilter, setVerdictFilter] = useState<Verdict | 'all'>('all');
   const [selection, setSelected] = useState<SelectedCheck>();
@@ -103,27 +104,49 @@ export function MonitorView({
     localStorage.setItem('collapsedGroups', JSON.stringify([...collapsed]));
   }, [collapsed]);
   useEffect(() => {
-    localStorage.setItem('collapsedTargets', JSON.stringify([...collapsedTargets]));
-  }, [collapsedTargets]);
-  const toggleTarget = (id: string): void =>
-    setCollapsedTargets((current) => {
+    // Replaced by expandedTargets when targets became one line each by default.
+    localStorage.removeItem('collapsedTargets');
+  }, []);
+  useEffect(() => {
+    localStorage.setItem('expandedTargets', JSON.stringify([...expandedTargets]));
+  }, [expandedTargets]);
+  useEffect(() => {
+    localStorage.setItem('healthyShownGroups', JSON.stringify([...healthyShown]));
+  }, [healthyShown]);
+  const toggleHealthy = (group: string): void =>
+    setHealthyShown((current) => {
       const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(group)) next.delete(group);
+      else next.add(group);
       return next;
     });
-  // Bulk expand/collapse: with hundreds of hosts, per-row clicking is not workable.
   const viewMenu = useRef<HTMLDetailsElement>(null);
-  const setTargetsCollapsed = (ids: readonly string[], collapse: boolean): void => {
-    setCollapsedTargets((current) => {
+  // A search or status filter is a request to look closer, so matching targets open up.
+  // Collapsing one during that search is remembered only until the filter is cleared.
+  const autoExpand =
+    search !== '' || statusFilter !== 'all' || typeFilter !== 'all' || verdictFilter !== 'all';
+  const [collapsedWhileFiltering, setCollapsedWhileFiltering] = useState<Set<string>>(
+    () => new Set(),
+  );
+  useEffect(() => {
+    if (!autoExpand) setCollapsedWhileFiltering(new Set());
+  }, [autoExpand]);
+  const isExpanded = (id: string): boolean =>
+    autoExpand ? !collapsedWhileFiltering.has(id) : expandedTargets.has(id);
+  const setTargetsExpanded = (ids: readonly string[], expand: boolean): void => {
+    const update = (current: Set<string>, add: boolean): Set<string> => {
       const next = new Set(current);
       for (const id of ids)
-        if (collapse) next.add(id);
+        if (add) next.add(id);
         else next.delete(id);
       return next;
-    });
+    };
+    if (autoExpand) setCollapsedWhileFiltering((current) => update(current, !expand));
+    else setExpandedTargets((current) => update(current, expand));
     if (viewMenu.current) viewMenu.current.open = false;
   };
+  const toggleTarget = (id: string): void => setTargetsExpanded([id], !isExpanded(id));
+  // Bulk expand/collapse: with hundreds of hosts, per-row clicking is not workable.
   const setGroupsCollapsed = (names: readonly string[], collapse: boolean): void => {
     setCollapsed(collapse ? new Set(names) : new Set());
     if (viewMenu.current) viewMenu.current.open = false;
@@ -228,6 +251,17 @@ export function MonitorView({
       }),
     [snapshot.targets, snapshot.templates],
   );
+  const board = groups.flatMap(([group, targets]) => {
+    const rows = targets.flatMap((target) => {
+      const checks = orderedChecks(target);
+      if (checks.length === 0) return [];
+      const states = checks.map((check) => stateOf(target, check));
+      return [{ target, checks, states, health: targetHealth(states) }];
+    });
+    return rows.length
+      ? [{ group, rows, level: worstLevel(rows.map((row) => row.health.level)) }]
+      : [];
+  });
   const groupNames = groups.map(([group]) => group);
   const allTargetIds = snapshot.targets.map((target) => target.id);
   const visibleChecks = snapshot.targets.reduce(
@@ -325,10 +359,10 @@ export function MonitorView({
                 Collapse all groups
               </button>
               <hr />
-              <button role="menuitem" onClick={() => setTargetsCollapsed(allTargetIds, false)}>
+              <button role="menuitem" onClick={() => setTargetsExpanded(allTargetIds, true)}>
                 Expand all targets
               </button>
-              <button role="menuitem" onClick={() => setTargetsCollapsed(allTargetIds, true)}>
+              <button role="menuitem" onClick={() => setTargetsExpanded(allTargetIds, false)}>
                 Collapse all targets
               </button>
               <hr />
@@ -336,7 +370,8 @@ export function MonitorView({
                 role="menuitem"
                 onClick={() => {
                   setGroupsCollapsed(groupNames, false);
-                  setTargetsCollapsed(allTargetIds, false);
+                  setHealthyShown(new Set(groupNames));
+                  setTargetsExpanded(allTargetIds, true);
                 }}
               >
                 Expand everything
@@ -345,10 +380,30 @@ export function MonitorView({
                 role="menuitem"
                 onClick={() => {
                   setGroupsCollapsed(groupNames, true);
-                  setTargetsCollapsed(allTargetIds, true);
+                  setHealthyShown(new Set());
+                  setTargetsExpanded(allTargetIds, false);
                 }}
               >
                 Collapse everything
+              </button>
+              <hr />
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setHealthyShown(new Set(groupNames));
+                  if (viewMenu.current) viewMenu.current.open = false;
+                }}
+              >
+                Show healthy targets
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setHealthyShown(new Set());
+                  if (viewMenu.current) viewMenu.current.open = false;
+                }}
+              >
+                Fold healthy targets
               </button>
             </div>
           </details>
@@ -360,27 +415,30 @@ export function MonitorView({
             <span className="filter-summary">{totalChecks} checks</span>
           )}
         </section>
-        <div className="table-head">
-          <span>Target / check</span>
-          <span>Status</span>
-          <span>Diagnostic</span>
-          <span>Response</span>
-          <span>Checked / next</span>
-          <span className="sr-only">Actions</span>
-        </div>
         <div className="target-groups">
-          {groups.map(([group, targets]) => {
-            const groupStates = targets.flatMap((target) =>
-              orderedChecks(target).map((check) => stateOf(target, check)),
-            );
-            const targetChecks = groupStates.map((state) => state.status);
-            if (targetChecks.length === 0) return null;
+          {byHealth(board, (entry) => entry.level).map(({ group, rows, level }) => {
             const isCollapsed = collapsed.has(group);
-            const shownTargets = targets.filter((target) => orderedChecks(target).length > 0);
-            const groupIds = shownTargets.map((target) => target.id);
-            const anyExpanded = groupIds.some((id) => !collapsedTargets.has(id));
+            const groupIds = rows.map((row) => row.target.id);
+            const anyExpanded = groupIds.some(isExpanded);
+            const levels = countLevels(rows.map((row) => row.health.level));
+            // Healthy targets fold into one line so problems stay on screen; a search or
+            // filter shows every match.
+            const showHealthy = filtering || healthyShown.has(group);
+            const pinned = new Set(
+              rows
+                .map((row) => row.target.id)
+                .filter((id) => isExpanded(id) || selected?.target.id === id),
+            );
+            const sorted = byHealth(rows, (row) => row.health.level);
+            const { shown: problems, folded: healthy } = foldHealthy(
+              sorted,
+              (row) => row.health.level,
+              (row) => row.target.id,
+              pinned,
+            );
+            const shown = showHealthy ? sorted : problems;
             return (
-              <section className="target-group" key={group}>
+              <section className={`target-group health-${level}`} key={group}>
                 <div className="group-heading">
                   <button
                     type="button"
@@ -398,8 +456,7 @@ export function MonitorView({
                     {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
                     <span>{group}</span>
                     <small>
-                      {shownTargets.length} target{shownTargets.length === 1 ? '' : 's'} ·{' '}
-                      {summarizeStatuses(countStatuses(groupStates))}
+                      {rows.length} target{rows.length === 1 ? '' : 's'} · {levels.text}
                     </small>
                   </button>
                   {!isCollapsed && (
@@ -412,139 +469,65 @@ export function MonitorView({
                           ? 'Collapse targets in this group'
                           : 'Expand targets in this group'
                       }
-                      onClick={() => setTargetsCollapsed(groupIds, anyExpanded)}
+                      onClick={() => setTargetsExpanded(groupIds, !anyExpanded)}
                     >
                       {anyExpanded ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />}
                     </button>
                   )}
-                  <span className="group-pips" aria-hidden="true">
-                    {PIP_ORDER.flatMap((status) =>
-                      targetChecks
-                        .filter((item) => item === status)
-                        .map((_, index) => (
-                          <i key={`${status}-${index}`} className={`pip-${status.toLowerCase()}`} />
-                        )),
+                  <span className="group-bar" aria-hidden="true">
+                    {HEALTH_ORDER.map((item) =>
+                      levels.counts[item] > 0 ? (
+                        <i
+                          key={item}
+                          className={`health-${item}`}
+                          style={{ flexGrow: levels.counts[item] }}
+                        />
+                      ) : null,
                     )}
                   </span>
                 </div>
                 {!isCollapsed &&
-                  targets.map((target) => {
-                    const checks = orderedChecks(target);
-                    if (checks.length === 0) return null;
-                    const states = checks.map((check) => stateOf(target, check));
-                    const targetStatus = aggregateStatus(states.map((state) => state.status));
-                    const targetCollapsed = collapsedTargets.has(target.id);
-                    return (
-                      <div
-                        className={`target-block ${targetCollapsed ? 'collapsed' : ''}`}
-                        key={target.id}
-                      >
-                        <div className="target-heading">
-                          <div>
-                            <button
-                              type="button"
-                              className="icon-button collapse-toggle"
-                              aria-expanded={!targetCollapsed}
-                              aria-label={`${targetCollapsed ? 'Expand' : 'Collapse'} ${target.name}`}
-                              onClick={() => toggleTarget(target.id)}
-                            >
-                              {targetCollapsed ? (
-                                <ChevronRight size={15} />
-                              ) : (
-                                <ChevronDown size={15} />
-                              )}
-                            </button>
-                            <Server size={15} />
-                            <strong>{target.name}</strong>
-                            <code>{target.host}</code>
-                            <StatusBadge status={targetStatus} subtle />
-                            <TargetSummary
-                              checks={checks}
-                              states={states}
-                              selectedCheckId={
-                                selected?.target.id === target.id ? selected.checkId : undefined
-                              }
-                              onSelect={(checkId) => {
-                                setSelected({ target, checkId });
-                                if (targetCollapsed) toggleTarget(target.id);
-                              }}
-                            />
-                            {missingTemplateVariables(
-                              target,
-                              snapshot.templates.find((item) => item.id === target.template),
-                            ).length > 0 && (
-                              <button
-                                className="type-pill needs-pill"
-                                title="Some inherited checks are inactive until template variables are set"
-                                onClick={() => onEdit(target)}
-                              >
-                                NEEDS{' '}
-                                {missingTemplateVariables(
-                                  target,
-                                  snapshot.templates.find((item) => item.id === target.template),
-                                ).join(', ')}
-                              </button>
-                            )}
-                          </div>
-                          <div className="row-actions">
-                            <button
-                              className="mini-button"
-                              onClick={() => void window.opossum.runTarget(target.id)}
-                            >
-                              <RotateCw size={14} /> Run target
-                            </button>
-                            <button
-                              className="icon-button"
-                              aria-label={`Target actions for ${target.name}`}
-                              title="Edit target"
-                              onClick={() => onEdit(target)}
-                            >
-                              <Settings2 size={16} />
-                            </button>
-                            <button
-                              className="icon-button"
-                              aria-label={`Duplicate ${target.name}`}
-                              title="Duplicate target"
-                              onClick={() => onDuplicate(target)}
-                            >
-                              <Copy size={16} />
-                            </button>
-                            <button
-                              className="icon-button"
-                              aria-label={`Export ${target.name}`}
-                              title="Export target as YAML"
-                              onClick={() =>
-                                void window.opossum.exportConfiguration({ targetIds: [target.id] })
-                              }
-                            >
-                              <Download size={16} />
-                            </button>
-                          </div>
-                        </div>
-                        {!targetCollapsed &&
-                          checks.map((check) => (
-                            <CheckRow
-                              key={check.id}
-                              target={target}
-                              check={check}
-                              state={stateOf(target, check)}
-                              timeoutSeconds={
-                                check.timeout_seconds ?? snapshot.settings.default_timeout_seconds
-                              }
-                              selected={
-                                selected?.target.id === target.id && selected.checkId === check.id
-                              }
-                              onSelect={() => setSelected({ target, checkId: check.id })}
-                            />
-                          ))}
-                        {!targetCollapsed && (
-                          <button className="delete-target-link" onClick={() => onDelete(target)}>
-                            Delete target…
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
+                  shown.map(({ target, checks, states, health }) => (
+                    <TargetBlock
+                      key={target.id}
+                      target={target}
+                      checks={checks}
+                      states={states}
+                      health={health}
+                      expanded={isExpanded(target.id)}
+                      selectedCheckId={
+                        selected?.target.id === target.id ? selected.checkId : undefined
+                      }
+                      missingVariables={missingTemplateVariables(
+                        target,
+                        snapshot.templates.find((item) => item.id === target.template),
+                      )}
+                      defaultTimeoutSeconds={snapshot.settings.default_timeout_seconds}
+                      onToggle={() => toggleTarget(target.id)}
+                      onSelectCheck={(checkId) => setSelected({ target, checkId })}
+                      onEdit={() => onEdit(target)}
+                      onDuplicate={() => onDuplicate(target)}
+                      onDelete={() => onDelete(target)}
+                    />
+                  ))}
+                {!isCollapsed && healthy.length > 0 && !filtering && (
+                  <button
+                    type="button"
+                    className="healthy-fold"
+                    aria-expanded={showHealthy}
+                    onClick={() => toggleHealthy(group)}
+                  >
+                    {showHealthy ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                    <span className="health-mark health-ok" aria-hidden="true" />
+                    <strong>
+                      {showHealthy ? 'Fold' : ''} {healthy.length} healthy target
+                      {healthy.length === 1 ? '' : 's'}
+                    </strong>
+                    {!showHealthy && (
+                      <small>{healthy.map((row) => row.target.name).join(', ')}</small>
+                    )}
+                  </button>
+                )}
               </section>
             );
           })}
