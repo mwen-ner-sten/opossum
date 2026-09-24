@@ -1,5 +1,6 @@
 import { ClipboardCopy, Clock3, Copy, RotateCw, X } from 'lucide-react';
 import type { CheckConfig, TargetConfig } from '@core/config';
+import { checkGuidance } from '@core/check-guidance';
 import type { LiveCheckState, TimelineResult } from '@core/models';
 import type { AppSnapshot, TimelineRange } from '@shared/contracts';
 import { RelativeTime } from '../../components/RelativeTime';
@@ -22,6 +23,12 @@ export function DetailPanel({
   onRange,
   onClose,
   onCopy,
+  pausedAll,
+  onEdit,
+  onOpenData,
+  onDependency,
+  onError,
+  onResumeAll,
 }: {
   selected: SelectedCheck;
   state: LiveCheckState | undefined;
@@ -31,10 +38,43 @@ export function DetailPanel({
   onRange(range: TimelineRange): void;
   onClose(): void;
   onCopy(text: string, label: string): Promise<void>;
+  pausedAll: boolean;
+  onEdit(): void;
+  onOpenData(): void;
+  onDependency(checkId: string): void;
+  onError(message: string): void;
+  onResumeAll(): Promise<void>;
 }) {
   const now = useNow();
   const check = selected.target.checks.find((item) => item.id === selected.checkId);
   if (!check) return null;
+  const guidance = checkGuidance(selected.target, check, state, pausedAll);
+  const act = async (): Promise<void> => {
+    try {
+      switch (guidance.action) {
+        case 'settings':
+          onOpenData();
+          break;
+        case 'edit':
+          onEdit();
+          break;
+        case 'dependency':
+          if (state?.dependencyId) onDependency(state.dependencyId);
+          break;
+        case 'run':
+          await window.opossum.runCheck(selected.target.id, check.id);
+          break;
+        case 'resume':
+          await window.opossum.resumeCheck(selected.target.id, check.id);
+          break;
+        case 'resumeAll':
+          await onResumeAll();
+          break;
+      }
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'The action could not be completed.');
+    }
+  };
   const held = formatHeld(state?.statusSince, now);
   const result = state?.result ?? state?.lastKnown?.result;
   const resultText = result
@@ -122,6 +162,15 @@ export function DetailPanel({
           <ClipboardCopy size={15} /> Copy diagnostic
         </button>
       </div>
+      <section className="detail-section check-guidance" aria-label="Check guidance">
+        <h3>{guidance.title}</h3>
+        <p>{guidance.explanation}</p>
+        {guidance.action && (
+          <button className="button secondary" onClick={() => void act()}>
+            {guidance.label}
+          </button>
+        )}
+      </section>
       <section className="detail-section">
         <h3>Schedule</h3>
         <dl className="detail-list">

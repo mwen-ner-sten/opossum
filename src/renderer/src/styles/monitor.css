@@ -20,7 +20,11 @@
   min-height: 0;
   overflow: hidden;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr);
+}
+.workspace-main:has(.configuration-needs) {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
 }
 .with-details .table-head,
 .with-details .check-row {
@@ -30,6 +34,7 @@
 /* --- Filters --- */
 .filterbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   padding: 10px 16px;
@@ -417,6 +422,7 @@
   overflow: auto;
   padding-bottom: 50px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
 }
 .detail-heading {
@@ -497,6 +503,7 @@
 }
 .detail-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 12px 18px;
   border-bottom: 1px solid var(--line);
@@ -843,4 +850,40 @@
   border: 0;
   border-top: 1px solid var(--line);
   margin: 4px 0;
+}
+
+.configuration-needs {
+  max-height: 180px;
+  overflow: auto;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+/* Keep off-screen sites in search and the accessibility tree without laying out every row. */
+.target-block {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 110px;
+}
+.configuration-needs h2 {
+  font-size: var(--text-md);
+  margin: 0 0 6px;
+}
+.configuration-needs p,
+.check-guidance p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.configuration-needs .button {
+  margin: 4px 8px 4px 0;
+  white-space: normal;
+}
+.check-guidance .button {
+  white-space: normal;
+}
+.session-report {
+  margin-bottom: 20px;
+}
+.session-report .session-inspector-controls {
+  align-items: end;
 }

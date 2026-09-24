@@ -52,6 +52,8 @@ export interface LiveCheckState {
   result?: CheckResult;
   lastKnown?: LastKnownState;
   nextRunAt?: string | undefined;
+  activity?: 'queued' | 'dependencies' | 'retry' | undefined;
+  dependencyId?: string | undefined;
   /** Present while failure backoff has stretched the interval; the stretched interval in ms. */
   backoffMs?: number | undefined;
   /** When the current PASS/FAIL status was first observed this session. */

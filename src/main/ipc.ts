@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { writeFile } from 'node:fs/promises';
 import { dialog, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { appSettingsSchema, checkSchema, checkTemplateSchema, targetSchema } from '@core/config';
 import { SUPPORTED_EXTENSIONS } from './transfer/sources';
@@ -187,6 +188,17 @@ export function registerIpc(
   register(IPC.sessions, sessionsSchema, (options) =>
     application.repositories.listSessions(options?.limit, options?.before),
   );
+  register(IPC.sessionSummary, z.string().uuid(), (id) => application.getSessionReport(id).summary);
+  register(IPC.sessionCsv, z.string().uuid(), async (id) => {
+    const selected = await dialog.showSaveDialog({
+      title: 'Export session status intervals',
+      defaultPath: `opossum-session-${id.slice(0, 8)}.csv`,
+      filters: [{ name: 'CSV status intervals', extensions: ['csv'] }],
+    });
+    if (!selected.filePath) return undefined;
+    await writeFile(selected.filePath, application.getSessionReport(id).csv, 'utf8');
+    return selected.filePath;
+  });
   register(IPC.timeline, timelineSchema, (options) =>
     application.getTimeline(options.targetId, options.checkId, options.range, options.sessionId),
   );

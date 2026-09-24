@@ -21,6 +21,8 @@ export interface SchedulerOptions {
   runners?: Partial<Record<CheckConfig['type'], CheckRunner>>;
   /** Delay before re-running a check whose failure count is still below its threshold. */
   softFailRetryMs?: number;
+  /** Coalesce UI snapshots; persistence still records every observation. */
+  publishIntervalMs?: number;
 }
 
 interface Entry {
@@ -30,6 +32,7 @@ interface Entry {
   timer?: ReturnType<typeof setTimeout> | undefined;
   controller?: AbortController | undefined;
   running: boolean;
+  generation: number;
   manualQueued: boolean;
   pausedByUser: boolean;
   consecutiveFailures: number;
@@ -49,13 +52,15 @@ function statusSince(previous: LiveCheckState, result: CheckResult): string {
 
 export class Scheduler {
   private readonly entries = new Map<string, Entry>();
-  private readonly waiting: Array<() => Promise<void>> = [];
+  private readonly waiting = new Set<Entry>();
   private readonly runners: Record<CheckConfig['type'], CheckRunner>;
   private readonly softFailRetryMs: number;
   private activeCount = 0;
   private stopped = false;
   private started = false;
   private pausedAll = false;
+  private publishTimer?: ReturnType<typeof setTimeout> | undefined;
+  private readonly publishIntervalMs: number;
 
   constructor(
     private settings: AppSettings,
@@ -66,6 +71,7 @@ export class Scheduler {
   ) {
     this.runners = { ...CHECK_RUNNERS, ...options.runners };
     this.softFailRetryMs = options.softFailRetryMs ?? DEFAULT_SOFT_FAIL_RETRY_MS;
+    this.publishIntervalMs = options.publishIntervalMs ?? 0;
     this.reload(settings, targets, lastKnown);
   }
 
@@ -87,6 +93,7 @@ export class Scheduler {
   }
 
   reload(settings: AppSettings, targets: TargetConfig[], lastKnown: LastKnownState[] = []): void {
+    const previousSettings = this.settings;
     this.settings = settings;
     const known = new Map(lastKnown.map((item) => [keyFor(item.targetId, item.checkId), item]));
     const wanted = new Set<string>();
@@ -95,7 +102,7 @@ export class Scheduler {
         const key = keyFor(target.id, check.id);
         wanted.add(key);
         const existing = this.entries.get(key);
-        if (existing) this.updateEntry(existing, target, check);
+        if (existing) this.updateEntry(existing, target, check, previousSettings);
         else this.createEntry(key, target, check, known.get(key));
       }
     }
@@ -103,9 +110,21 @@ export class Scheduler {
       if (!wanted.has(key)) {
         if (entry.timer) clearTimeout(entry.timer);
         entry.controller?.abort();
+        this.waiting.delete(entry);
         this.entries.delete(key);
       }
     }
+    // Configuration may remove or disable a precursor. Re-evaluate only after the full graph
+    // has been updated, so a dependent cannot get stranded waiting for a removed check.
+    for (const entry of this.entries.values()) {
+      if (
+        !entry.running &&
+        !this.isPaused(entry) &&
+        (entry.waitingOnDependencies || entry.state.result?.category === 'blocked')
+      )
+        this.schedule(entry, 0);
+    }
+    this.pump();
     this.publish();
   }
 
@@ -123,6 +142,7 @@ export class Scheduler {
       target,
       check,
       running: false,
+      generation: 0,
       manualQueued: false,
       pausedByUser: false,
       consecutiveFailures: 0,
@@ -139,26 +159,51 @@ export class Scheduler {
     if (this.started && !this.isPaused(entry)) this.schedule(entry, 0);
   }
 
-  private updateEntry(entry: Entry, target: TargetConfig, check: CheckConfig): void {
+  private updateEntry(
+    entry: Entry,
+    target: TargetConfig,
+    check: CheckConfig,
+    previousSettings: AppSettings,
+  ): void {
     const intervalChanged =
-      effectiveInterval(entry.check, this.settings) !== effectiveInterval(check, this.settings);
+      effectiveInterval(entry.check, previousSettings) !==
+        effectiveInterval(check, this.settings) ||
+      previousSettings.failure_backoff_max_seconds !== this.settings.failure_backoff_max_seconds;
+    const changed =
+      entry.target.host !== target.host || JSON.stringify(entry.check) !== JSON.stringify(check);
     entry.target = target;
     entry.check = check;
+    if (changed) {
+      entry.generation += 1;
+      entry.controller?.abort();
+      this.waiting.delete(entry);
+      if (entry.timer) clearTimeout(entry.timer);
+      entry.timer = undefined;
+      entry.consecutiveFailures = 0;
+      entry.waitingOnDependencies = false;
+      entry.state = {
+        targetId: target.id,
+        checkId: check.id,
+        status: 'UNKNOWN',
+        isHistorical: false,
+      };
+    }
     const paused = this.isPaused(entry);
     if (paused && !entry.running) {
-      if (entry.state.status !== 'PAUSED') this.recordPaused(entry);
-      entry.state = { ...entry.state, status: 'PAUSED', nextRunAt: undefined };
+      this.applyPause(entry);
     } else if (!paused && entry.state.status === 'PAUSED') {
       entry.state = { ...entry.state, status: 'UNKNOWN' };
       if (this.started) this.schedule(entry, 0);
-    } else if (!paused && intervalChanged && !entry.running && this.started) {
-      this.schedule(entry, this.nextDelay(entry));
+    } else if (!paused && (changed || intervalChanged) && !entry.running && this.started) {
+      this.waiting.delete(entry);
+      this.schedule(entry, changed ? 0 : this.nextDelay(entry));
+      entry.state = { ...entry.state, backoffMs: this.backoffState(entry) };
     }
   }
 
   runCheck(targetId: string, checkId: string): void {
     const entry = this.entries.get(keyFor(targetId, checkId));
-    if (!entry || entry.state.status === 'PAUSED') return;
+    if (!entry || this.isPaused(entry)) return;
     if (entry.running) {
       entry.manualQueued = true;
       return;
@@ -210,9 +255,18 @@ export class Scheduler {
     if (entry.timer) clearTimeout(entry.timer);
     entry.timer = undefined;
     entry.manualQueued = false;
+    this.waiting.delete(entry);
     if (entry.running || entry.state.status === 'PAUSED') return;
-    entry.state = { ...entry.state, status: 'PAUSED', nextRunAt: undefined, isHistorical: false };
+    entry.state = {
+      ...entry.state,
+      status: 'PAUSED',
+      nextRunAt: undefined,
+      activity: undefined,
+      dependencyId: undefined,
+      isHistorical: false,
+    };
     this.recordPaused(entry);
+    this.releaseDependents(entry);
   }
 
   private applyResume(entry: Entry): void {
@@ -225,20 +279,18 @@ export class Scheduler {
   async stop(graceMs = 2_000): Promise<void> {
     this.stopped = true;
     this.started = false;
+    this.waiting.clear();
+    if (this.publishTimer) clearTimeout(this.publishTimer);
+    this.publishTimer = undefined;
     for (const entry of this.entries.values()) {
       if (entry.timer) clearTimeout(entry.timer);
       entry.controller?.abort();
     }
-    await Promise.race([
-      new Promise<void>((resolve) => {
-        const poll = (): void => {
-          if (this.activeCount === 0) resolve();
-          else setTimeout(poll, 25);
-        };
-        poll();
-      }),
-      new Promise<void>((resolve) => setTimeout(resolve, graceMs)),
-    ]);
+    const deadline = Date.now() + graceMs;
+    while (this.activeCount > 0 && Date.now() < deadline)
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, Math.min(25, deadline - Date.now())),
+      );
   }
 
   /**
@@ -268,8 +320,11 @@ export class Scheduler {
     return backoff > baseMs ? backoff : undefined;
   }
 
-  private entriesOf(targetId: string): Entry[] {
-    return [...this.entries.values()].filter((entry) => entry.target.id === targetId);
+  private entriesOf(target: TargetConfig): Entry[] {
+    return target.checks.flatMap((check) => {
+      const entry = this.entries.get(keyFor(target.id, check.id));
+      return entry ? [entry] : [];
+    });
   }
 
   /**
@@ -289,11 +344,14 @@ export class Scheduler {
 
   /** Re-queues checks that were waiting on, or blocked by, the given precursor. */
   private releaseDependents(precursor: Entry): void {
-    for (const entry of this.entriesOf(precursor.target.id)) {
+    for (const entry of this.entriesOf(precursor.target)) {
       if (!entry.check.depends_on?.includes(precursor.check.id)) continue;
       if (entry.running || entry.state.status === 'PAUSED') continue;
       const wasBlocked = entry.state.result?.category === 'blocked';
-      if (entry.waitingOnDependencies || (wasBlocked && precursor.state.status === 'PASS')) {
+      if (
+        entry.waitingOnDependencies ||
+        (wasBlocked && ['PASS', 'PAUSED'].includes(precursor.state.status))
+      ) {
         entry.waitingOnDependencies = false;
         if (entry.timer) clearTimeout(entry.timer);
         this.enqueue(entry);
@@ -314,30 +372,39 @@ export class Scheduler {
   }
 
   private schedule(entry: Entry, delayMs: number): void {
-    if (this.stopped || entry.state.status === 'PAUSED') return;
+    if (this.stopped || this.isPaused(entry) || !this.isCurrent(entry)) return;
     if (entry.timer) clearTimeout(entry.timer);
     const nextRunAt = new Date(Date.now() + delayMs).toISOString();
-    entry.state = { ...entry.state, nextRunAt };
+    entry.state = { ...entry.state, nextRunAt, activity: undefined };
     entry.timer = setTimeout(() => this.enqueue(entry), delayMs);
   }
 
   private enqueue(entry: Entry): void {
-    if (this.stopped || entry.running || entry.state.status === 'PAUSED') return;
+    if (this.stopped || entry.running || this.isPaused(entry) || !this.isCurrent(entry)) return;
+    if (entry.timer) clearTimeout(entry.timer);
     entry.timer = undefined;
-    this.waiting.push(() => this.execute(entry));
+    entry.state = {
+      ...entry.state,
+      nextRunAt: undefined,
+      activity: 'queued',
+      dependencyId: undefined,
+    };
+    this.waiting.add(entry);
     this.pump();
+    this.publish();
   }
 
   private pump(): void {
     while (
       !this.stopped &&
       this.activeCount < this.settings.max_concurrent_checks &&
-      this.waiting.length > 0
+      this.waiting.size > 0
     ) {
-      const task = this.waiting.shift();
-      if (!task) return;
+      const entry = this.waiting.values().next().value;
+      if (!entry) return;
+      this.waiting.delete(entry);
       this.activeCount += 1;
-      void task().finally(() => {
+      void this.execute(entry).finally(() => {
         this.activeCount -= 1;
         this.pump();
       });
@@ -345,37 +412,60 @@ export class Scheduler {
   }
 
   private async execute(entry: Entry): Promise<void> {
-    if (this.stopped || entry.state.status === 'PAUSED') return;
+    if (this.stopped || entry.running || this.isPaused(entry) || !this.isCurrent(entry)) return;
     const gate = this.dependencyGate(entry);
     if (gate === 'wait') {
       // The precursor is still checking or has never run; it will release this check when done.
       entry.waitingOnDependencies = true;
-      entry.state = { ...entry.state, nextRunAt: undefined };
+      entry.state = {
+        ...entry.state,
+        nextRunAt: undefined,
+        activity: 'dependencies',
+        dependencyId: entry.check.depends_on?.find((id) => {
+          const status = this.entries.get(keyFor(entry.target.id, id))?.state.status;
+          return status !== 'PASS' && status !== 'PAUSED';
+        }),
+      };
       this.publish();
       return;
     }
     entry.waitingOnDependencies = false;
     entry.running = true;
+    const generation = entry.generation;
     entry.controller = new AbortController();
     entry.lastStartedAt = Date.now();
-    entry.state = { ...entry.state, status: 'CHECKING', nextRunAt: undefined };
+    entry.state = {
+      ...entry.state,
+      status: 'CHECKING',
+      nextRunAt: undefined,
+      activity: undefined,
+      dependencyId: gate?.check.id,
+    };
     this.publish();
     const result = gate
       ? this.blockedResult(gate)
       : await this.runSafely(entry, entry.controller.signal);
-    entry.running = false;
     entry.controller = undefined;
+
+    if (!this.isCurrent(entry) || entry.generation !== generation) {
+      entry.running = false;
+      if (this.isCurrent(entry) && !this.stopped) {
+        if (this.isPaused(entry)) this.applyPause(entry);
+        else this.schedule(entry, 0);
+      }
+      this.publish();
+      return;
+    }
 
     // A canceled result is not an observation: never persist it or present it as FAIL.
     if (this.stopped || result.category === 'canceled') {
+      entry.running = false;
       entry.state = { ...entry.state, status: this.isPaused(entry) ? 'PAUSED' : 'UNKNOWN' };
       entry.manualQueued = false;
       this.publish();
       return;
     }
-
-    const paused = this.isPaused(entry);
-    const softFail = !paused && this.isSoftFailure(entry, result);
+    const softFail = !this.isPaused(entry) && this.isSoftFailure(entry, result);
     if (!softFail) {
       try {
         await this.callbacks.onResult(entry.target.id, entry.check.id, result);
@@ -383,6 +473,15 @@ export class Scheduler {
         this.callbacks.onError?.(`record result ${entry.target.id}/${entry.check.id}`, error);
       }
     }
+    entry.running = false;
+    if (this.stopped || !this.isCurrent(entry) || entry.generation !== generation) {
+      if (this.isCurrent(entry) && !this.stopped) {
+        if (this.isPaused(entry)) this.applyPause(entry);
+        else this.schedule(entry, 0);
+      }
+      return;
+    }
+    const paused = this.isPaused(entry);
     entry.state = softFail
       ? { ...entry.state, status: entry.state.result?.status ?? 'UNKNOWN' }
       : {
@@ -397,7 +496,11 @@ export class Scheduler {
     if (paused) this.recordPaused(entry);
     else if (softFail) this.schedule(entry, Math.min(this.softFailRetryMs, this.nextDelay(entry)));
     else this.schedule(entry, rerun ? 0 : this.nextDelay(entry));
-    entry.state = { ...entry.state, backoffMs: this.backoffState(entry) };
+    entry.state = {
+      ...entry.state,
+      backoffMs: this.backoffState(entry),
+      activity: softFail ? 'retry' : undefined,
+    };
     this.releaseDependents(entry);
     this.publish();
   }
@@ -438,13 +541,26 @@ export class Scheduler {
   }
 
   private recordPaused(entry: Entry): void {
-    void Promise.resolve(this.callbacks.onPaused(entry.target.id, entry.check.id)).catch(
-      (error: unknown) =>
-        this.callbacks.onError?.(`record pause ${entry.target.id}/${entry.check.id}`, error),
-    );
+    const onError = (error: unknown): void =>
+      this.callbacks.onError?.(`record pause ${entry.target.id}/${entry.check.id}`, error);
+    try {
+      void Promise.resolve(this.callbacks.onPaused(entry.target.id, entry.check.id)).catch(onError);
+    } catch (error) {
+      onError(error);
+    }
   }
 
   private publish(): void {
-    this.callbacks.onStatesChanged(this.getStates());
+    if (this.stopped) return;
+    if (this.publishIntervalMs === 0) this.callbacks.onStatesChanged(this.getStates());
+    else if (!this.publishTimer)
+      this.publishTimer = setTimeout(() => {
+        this.publishTimer = undefined;
+        this.callbacks.onStatesChanged(this.getStates());
+      }, this.publishIntervalMs);
+  }
+
+  private isCurrent(entry: Entry): boolean {
+    return this.entries.get(keyFor(entry.target.id, entry.check.id)) === entry;
   }
 }

@@ -20,6 +20,8 @@ export const IPC = {
   saveTemplate: 'opossum:save-template',
   deleteTemplate: 'opossum:delete-template',
   sessions: 'opossum:sessions',
+  sessionSummary: 'opossum:session-summary',
+  sessionCsv: 'opossum:session-csv',
   timeline: 'opossum:timeline',
   stats: 'opossum:stats',
   previewPurge: 'opossum:preview-purge',

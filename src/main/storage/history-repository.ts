@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { CheckResult, LastKnownState, TimelineSegment } from '@core/models';
+import type { ReportInterval } from '@core/reports';
 import { OpossumError } from '@shared/errors';
 import { databaseString, now, type Db, type Row } from './sql';
 import type { TargetRepository } from './target-repository';
@@ -10,6 +11,32 @@ export class HistoryRepository {
     private readonly db: Db,
     private readonly targets: TargetRepository,
   ) {}
+
+  sessionReport(sessionId: string, endAt: string): ReportInterval[] {
+    const rows = this.db
+      .prepare(
+        `SELECT t.config_id target_id, t.name target_name, t.host,
+      c.config_id check_id, c.name check_name, i.*,
+      MIN(COALESCE(i.ended_at, ?), ?) effective_end
+      FROM status_intervals i JOIN targets t ON t.internal_id=i.target_internal_id
+      JOIN checks c ON c.internal_id=i.check_internal_id
+      WHERE i.session_id=? ORDER BY i.started_at, t.config_id, c.config_id, i.id`,
+      )
+      .all(endAt, endAt, sessionId) as Row[];
+    return rows.map((row) => ({
+      targetId: String(row.target_id),
+      targetName: String(row.target_name),
+      host: String(row.host),
+      checkId: String(row.check_id),
+      checkName: String(row.check_name),
+      status: String(row.status),
+      category: String(row.diagnostic_category),
+      startAt: String(row.started_at),
+      endAt: String(row.effective_end),
+      observations: Number(row.observation_count),
+      summary: String(row.latest_summary),
+    }));
+  }
 
   lastKnownStates(): LastKnownState[] {
     const rows = this.db
