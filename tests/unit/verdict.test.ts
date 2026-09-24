@@ -105,6 +105,7 @@ describe('verdictHeadline', () => {
   it('leads with regressions even while other checks are still running', () => {
     expect(headline([state('PASS', 'FAIL'), state('PASS', 'UNKNOWN', 'b')])).toEqual({
       tone: 'bad',
+      word: 'NO GO',
       text: '1 check broke since last session',
     });
   });
@@ -112,6 +113,7 @@ describe('verdictHeadline', () => {
   it('reports progress until every active check has a result', () => {
     expect(headline([state('PASS', 'PASS'), state('PASS', 'UNKNOWN', 'b')])).toEqual({
       tone: 'pending',
+      word: 'CHECKING',
       text: 'Checking… 1 of 2 checks have a result',
     });
   });
@@ -123,15 +125,30 @@ describe('verdictHeadline', () => {
         state('FAIL', 'FAIL'),
         { ...blocked, result: { ...blocked.result!, category: 'blocked' } },
       ]),
-    ).toEqual({ tone: 'warn', text: 'Nothing broke since last session · 2 checks still failing' });
+    ).toEqual({
+      tone: 'warn',
+      word: 'REVIEW',
+      text: 'Nothing broke since last session · 2 checks still failing',
+    });
+  });
+
+  it('does not claim a comparison when there is no earlier session', () => {
+    expect(headline([state(undefined, 'FAIL'), state(undefined, 'PASS', 'b')])).toEqual({
+      tone: 'warn',
+      word: 'REVIEW',
+      text: '1 check failing',
+    });
+    expect(headline([state(undefined, 'PASS')]).text).toBe('Everything passes');
   });
 
   it('distinguishes a clean result from pre-existing failures', () => {
     expect(headline([state('PASS', 'PASS'), state('FAIL', 'PASS', 'b')]).tone).toBe('good');
     expect(headline([state('PASS', 'PASS'), state('FAIL', 'FAIL', 'b')])).toEqual({
       tone: 'warn',
+      word: 'REVIEW',
       text: 'Nothing broke since last session · 1 check still failing',
     });
+    expect(headline([state('PASS', 'PASS')]).word).toBe('GO');
     expect(headline([state('PASS', 'PAUSED')]).tone).toBe('none');
   });
 });
@@ -161,7 +178,7 @@ describe('verdictReport', () => {
       ],
       '2026-09-24T12:30:00.000Z',
     );
-    expect(text).toContain('OPOSSUM post-patch check, 2026-09-24T12:30:00.000Z');
+    expect(text).toContain('OPOSSUM post-patch check, 2026-09-24T12:30:00.000Z: NO GO');
     expect(text).toContain('1 check broke since last session');
     expect(text).toContain(
       'Broke (1):\n- Denver BMS 01 (10.20.31.40) / WebStation: Timed out after 3 s',

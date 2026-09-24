@@ -151,7 +151,7 @@ Exports include active configuration and application defaults only. They are sor
 
 ## After a patch: what broke?
 
-Run OPOSSUM once before a patch window and close it; open it again afterwards. The banner above the monitor compares every check's result this session with its last result before the session opened:
+Run OPOSSUM once before a patch window and close it; open it again afterwards. The banner above the monitor gives the call in one word: **NO GO** when anything broke, **REVIEW** when nothing broke but some checks were already failing, **GO** when everything passes, and **CHECKING** until every check has a result. It compares every check's result this session with its last result before the session opened:
 
 - **Broke**: passed before, fails now. These are the ones to chase.
 - **Not run, prerequisite failing**: blocked by a failing `depends_on` check, so one dead host counts as one breakage rather than one per dependent check.
@@ -159,7 +159,9 @@ Run OPOSSUM once before a patch window and close it; open it again afterwards. T
 - **Recovered**: failed before, passes now.
 - **Not checked yet**: no result in this session so far. Paused checks are left out.
 
-Click a count to show only those checks. **Copy verdict** puts a plain-text summary on the clipboard for the change ticket: the headline, counts, the time span of the earlier results, and every check that broke, is still failing, was not run, recovered, or has not been checked yet. The earlier result is fixed for the whole session. A check whose host or settings are edited during the session loses its earlier result, because the old one no longer describes the same probe. If a host is still rebooting when OPOSSUM opens, it shows as broke until it answers again.
+Click a count to show only those checks.
+
+The board is built for that glance. Each target is one line: its step pips, the failure worth reading (the check that actually failed, not the checks it blocked), a _Broke_ or _Recovered_ flag, and when it was last checked. Groups and targets with problems sort to the top, and healthy targets fold into a single line per group. Click a target to see its check rows, or use **View → Expand everything**. Searching or filtering by status, type, or verdict opens the matching targets automatically. **Copy verdict** puts a plain-text summary on the clipboard for the change ticket: the headline, counts, the time span of the earlier results, and every check that broke, is still failing, was not run, recovered, or has not been checked yet. The earlier result is fixed for the whole session. A check whose host or settings are edited during the session loses its earlier result, because the old one no longer describes the same probe. If a host is still rebooting when OPOSSUM opens, it shows as broke until it answers again.
 
 ## Sessions, history, and availability
 

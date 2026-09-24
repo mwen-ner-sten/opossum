@@ -13,6 +13,18 @@ const CHIPS: readonly Verdict[] = [
   'ok',
 ];
 
+// Chips stay short; the full wording is in the tooltip.
+const CHIP_LABELS: Record<Verdict, string> = {
+  broke: 'Broke',
+  still_failing: 'Still failing',
+  new_failure: 'New failure',
+  blocked: 'Not run',
+  recovered: 'Recovered',
+  ok: 'OK',
+  pending: 'Not checked yet',
+  paused: 'Paused',
+};
+
 function baselineText(summary: VerdictSummary): string {
   if (!summary.baselineFrom) return 'No results from an earlier session to compare with';
   const at = (value: string): string =>
@@ -37,7 +49,10 @@ export function VerdictBar({ summary, activeFilter, onFilter, onCopy }: VerdictB
   const headline = verdictHeadline(summary);
   if (headline.tone === 'none') return null;
   return (
-    <section className={`verdict-bar tone-${headline.tone}`} aria-label="Since last session">
+    <section className={`verdict-bar tone-${headline.tone}`} aria-label="Go or no-go verdict">
+      <div className="verdict-word" aria-label={`Verdict: ${headline.word}`}>
+        {headline.word}
+      </div>
       <div className="verdict-text">
         <strong>{headline.text}</strong>
         <small>{baselineText(summary)}</small>
@@ -51,10 +66,10 @@ export function VerdictBar({ summary, activeFilter, onFilter, onCopy }: VerdictB
               type="button"
               className={`verdict-chip verdict-${verdict} ${active ? 'active' : ''}`}
               aria-pressed={active}
-              title={active ? 'Show all checks' : `Show only: ${VERDICT_LABELS[verdict]}`}
+              title={`${VERDICT_LABELS[verdict]}. ${active ? 'Click to show all checks.' : 'Click to show only these.'}`}
               onClick={() => onFilter(active ? 'all' : verdict)}
             >
-              <strong>{summary.counts[verdict]}</strong> {VERDICT_LABELS[verdict]}
+              <strong>{summary.counts[verdict]}</strong> {CHIP_LABELS[verdict]}
             </button>
           );
         })}
@@ -67,6 +82,11 @@ export function VerdictBar({ summary, activeFilter, onFilter, onCopy }: VerdictB
           <ClipboardCopy size={14} /> Copy verdict
         </button>
       </div>
+      {headline.tone === 'pending' && (
+        <div className="verdict-progress" aria-hidden="true">
+          <i style={{ width: `${(1 - summary.counts.pending / summary.active) * 100}%` }} />
+        </div>
+      )}
     </section>
   );
 }
